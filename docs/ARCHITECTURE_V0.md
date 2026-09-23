@@ -329,7 +329,15 @@ The adapter should expose concepts equivalent to:
 - error state;
 - completion evidence.
 
-Selectors, MutationObserver roots, Copy/Stop/Send markup, and stability timing remain unfrozen adapter details.
+Selectors, MutationObserver roots, and Copy/Stop/Send markup remain unfrozen adapter details.
+
+Initial adapter policy:
+- if the composer already contains non-whitespace text, fail pre-send rather than overwriting it;
+- prefer explicit Send controls, then the composer form's `requestSubmit()`; do not use synthetic Enter as a normal submission path;
+- capture user and assistant baselines before send;
+- identify assistant candidates by message ID when present, then non-baseline DOM identity/structural relation, then fingerprint fallback; message counts are diagnostic only;
+- MutationObserver callbacks only schedule reconciliation;
+- use an initial quiescence threshold of about 4 seconds as supporting evidence, always combined with stronger generation/error/protocol signals.
 
 ## 17. Turn completion vs task completion
 
@@ -380,6 +388,8 @@ No startup path is allowed to inspect the page first and invent what durable sta
 ### Wave 1
 
 One-chat vertical slice only.
+
+Wave 1 is not complete until the unpacked extension passes an authenticated real-Project smoke test. The current feasibility work did not have access to the user's authenticated Project session, so selectors and current generation/error-state signatures remain empirically unvalidated there.
 
 ### Wave 2
 
