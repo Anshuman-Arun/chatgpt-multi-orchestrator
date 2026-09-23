@@ -307,3 +307,34 @@ Regardless of implementation, the following are absolute project invariants:
 8. **Human intervention pauses rather than competes with automation.**
 9. **Logical worker identity is independent of browser tab and conversation identity.**
 10. **Any system restart must reconcile existing reality before producing new side effects.**
+
+
+---
+
+## O. Additive Wave-0 Integration Invariants
+
+These tests were added after reconciling the independent protocol, reliability, and DOM workstreams. They do not alter any earlier test.
+
+### QA-R001 — Send impossible before SUBMITTING
+No production code path may invoke the ChatGPT Send action while the Delivery is in `PENDING`, `CLAIMED`, `COMPOSER_FILLING`, or `COMPOSER_FILLED`. The Send-capable function must require a current persisted `SUBMITTING` authorization.
+
+### QA-R002 — Stale lease fence cannot act
+After a sender lease expires and another actor acquires a newer fencing token for the same conversation, the stale actor must be unable to advance durable Delivery state or invoke Send.
+
+### QA-R003 — Unknown retry preserves history
+A `DELIVERY_UNKNOWN` record may not be mutated back to `PENDING`. If a human explicitly authorizes retry despite duplicate risk, the retry must create a new Delivery with a new `delivery_id` linked through `retry_of_delivery_id`.
+
+### QA-R004 — State transition and journal append are atomic
+For every correctness-relevant durable state mutation, the state update and corresponding append-only journal record must commit in the same IndexedDB transaction. If journal insertion aborts, the state transition must also abort.
+
+### QA-R005 — Result forwarding cannot rerun worker work
+Once a worker response is durably captured, any crash or failure while enqueuing/delivering that result to the orchestrator must recover from the captured result/inbox state. It must never cause the worker's original prompt or completed worker turn to be rerun.
+
+### QA-R006 — Orchestrator action envelope is all-or-nothing
+If any action in an orchestrator envelope is structurally or semantically invalid, none of the actions in that envelope may commit or create Deliveries.
+
+### QA-R007 — Spawn handles are authoritative
+A v0 orchestrator `spawn` may use only an unused controller-supplied spawn handle for the current decision round. An invented, stale, mismatched, or already-used `task_id` / `logical_agent_id` pair invalidates the complete orchestrator envelope.
+
+### QA-R008 — needs_user pauses new worker deliveries
+While a v0 run is in `needs_user`, already in-flight worker turns may finish and be persisted, but no new worker Assignment, Continuation, or Follow-up Delivery may be issued until the human input is incorporated through a controlled orchestrator decision round.
