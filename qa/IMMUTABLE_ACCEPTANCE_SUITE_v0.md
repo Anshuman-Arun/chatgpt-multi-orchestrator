@@ -338,3 +338,18 @@ A v0 orchestrator `spawn` may use only an unused controller-supplied spawn handl
 
 ### QA-R008 — needs_user pauses new worker deliveries
 While a v0 run is in `needs_user`, already in-flight worker turns may finish and be persisted, but no new worker Assignment, Continuation, or Follow-up Delivery may be issued until the human input is incorporated through a controlled orchestrator decision round.
+
+
+### QA-R009 — Existing composer draft is never overwritten
+If the managed conversation composer contains non-whitespace user-authored text before router insertion, the controller must not append to it, clear it, overwrite it, or invoke Send. The lane must pause/fail pre-send.
+
+### QA-R010 — Mutation callbacks are wake signals only
+A MutationObserver callback may schedule reconciliation but may not directly commit a correctness-relevant state transition or external side effect. Duplicate/coalesced mutation callbacks must remain harmless.
+
+### QA-R011 — Assistant count is never authoritative identity
+Assistant-message count changes may be diagnostic only. No Delivery response may be accepted solely because the number of assistant message-like DOM nodes increased.
+
+### QA-G1.9 — Authenticated live Project smoke pass
+Before Wave 1 is declared complete, the unpacked extension must be exercised in an authenticated real ChatGPT Project conversation and record successful evidence for: conversation binding, exact composer verification, exact router-owned user-turn receipt, assistant candidate attribution, multi-signal completion, and terminal-protocol extraction. Mock DOM tests alone are insufficient.
+
+Wave 1 passes only if G1.1–G1.9 all pass.
