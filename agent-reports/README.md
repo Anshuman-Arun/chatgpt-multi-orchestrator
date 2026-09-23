@@ -1,41 +1,36 @@
 # Wave 0 Agent Reports
 
-This directory is the handoff point for the independent Wave 0 architecture agents.
+This directory contains the reconciled Wave 0 architecture work.
 
-## Required reports
+## Reports
 
-- `agent-a-protocol.md` — protocol and orchestration semantics
-- `agent-b-reliability.md` — reliability, persistence, reconciliation, and YOLO reuse
-- `agent-c-dom-feasibility.md` — live ChatGPT DOM/completion feasibility
-- `agent-d-integration.md` — adversarial integration/referee report
+- `agent-a-protocol.md` — merged result of **two independent protocol/orchestration runs**, with disagreements explicitly resolved.
+- `agent-b-reliability.md` — persistence, Delivery reconciliation, crash recovery, event journal, leases, and YOLO reuse.
+- `agent-c-dom-feasibility.md` — DOM/completion transport findings and selector-independent adapter contract.
+- `agent-d-integration.md` — adversarial integration/referee report and Wave 1 GO/NO-GO decision.
 
-## Workflow
+## Canonical output
 
-1. Agents A, B, and C work independently.
-2. Their reports are added here without reconciling contradictions.
-3. Agent D receives all three reports plus:
-   - `docs/PROJECT_CHARTER.md`
-   - `docs/IMPLEMENTATION_ROADMAP.md`
-   - `qa/IMMUTABLE_ACCEPTANCE_SUITE_v0.md`
-4. Agent D attacks contradictions and produces the proposed logical-contract freeze.
-5. No production multi-chat scheduler implementation begins before Agent D's GO decision and the Wave 1 vertical slice.
+The reports are evidence and design history.
 
-## Report discipline
+The canonical integrated contract is:
 
-Each report should explicitly distinguish:
+- `docs/ARCHITECTURE_V0.md`
 
-- verified facts;
-- tested observations;
-- architectural recommendations;
-- assumptions;
-- unresolved questions.
+The execution order remains:
 
-Agent C in particular must distinguish live-UI observations from inference or behavior merely copied from another repository.
+1. Wave 1 single-chat vertical slice.
+2. Wave 2 single-chat reconciliation/continuation/fault injection.
+3. Only after the Wave-2 QA gate: Wave 3 multi-chat orchestration.
 
 ## QA governance
 
-Agents may propose new acceptance tests.
+The immutable baseline remains:
 
-They may not weaken or delete existing tests in `qa/IMMUTABLE_ACCEPTANCE_SUITE_v0.md`.
+- `qa/IMMUTABLE_ACCEPTANCE_SUITE_v0.md`
 
-Any existing test believed to be impossible or internally inconsistent must be flagged for human adjudication.
+Existing test IDs and pass criteria may not be weakened or removed. New tests may be added.
+
+## Important process note
+
+DOM selectors and exact UI markup are intentionally **not frozen**. The logical protocol, Delivery semantics, and durable-state invariants are frozen independently of the current ChatGPT DOM adapter implementation.
