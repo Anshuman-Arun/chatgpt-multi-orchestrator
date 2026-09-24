@@ -329,9 +329,27 @@
     return now() - lastAt >= cooldownSec * 1000;
   }
 
+  async function wave1BindingBlocksLegacySend(actionPageId) {
+    if (!Config.isDurablePageId(actionPageId)) return false;
+    const response = await backgroundSendWithRetry({ type: "WAVE1_STATUS" });
+    return Boolean(
+      response?.ok
+      && response?.binding
+      && String(response.binding.provider_locator || "") === String(actionPageId || "")
+    );
+  }
+
   async function writeAndSubmit(prompt, actionPageId) {
     let submissionAttempted = false;
     try {
+      if (await wave1BindingBlocksLegacySend(actionPageId)) {
+        return {
+          ok: false,
+          code: "wave1.conversation_reserved",
+          reason: "This conversation is reserved for the durable Wave-1 sender",
+          deliveryAmbiguous: false
+        };
+      }
       let composer = Platforms.findComposer(state.platform);
       if (!composer) {
         return { ok: false, code: "composer.missing", reason: "Message composer was not found", deliveryAmbiguous: false };
