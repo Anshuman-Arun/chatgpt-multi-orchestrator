@@ -165,3 +165,21 @@ test('terminal Delivery failure states atomically update minimum task/run state'
   assert.match(unknown, /"tasks", "runs"/);
   assert.match(unknown, /status: "BLOCKED"/);
 });
+
+
+test('legacy YOLO send path is disabled once a conversation is Wave-1 bound', () => {
+  const source = read('content.js');
+  const helperStart = source.indexOf('async function wave1BindingBlocksLegacySend');
+  const writeStart = source.indexOf('async function writeAndSubmit');
+  const submit = source.indexOf('Platforms.submitComposer', writeStart);
+  assert.ok(helperStart >= 0);
+  assert.ok(writeStart > helperStart);
+  assert.ok(submit > writeStart);
+  const helper = source.slice(helperStart, writeStart);
+  assert.match(helper, /type:\s*"WAVE1_STATUS"/);
+  assert.match(helper, /response\?\.binding/);
+
+  const sendRegion = source.slice(writeStart, submit);
+  assert.match(sendRegion, /await wave1BindingBlocksLegacySend\(actionPageId\)/);
+  assert.match(sendRegion, /wave1\.conversation_reserved/);
+});
