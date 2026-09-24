@@ -299,11 +299,12 @@
         delivery_id: delivery.delivery_id,
         actor_id: message.actor_id,
         fence: message.fence,
+        response_text: candidate.text,
         response_text_hash: responseHash,
         completion_evidence: completion.evidence,
         boot_id: BOOT_ID
       });
-      const parsed = Core.parseWorkerTerminal(candidate.text, delivery);
+      const parsed = Core.parseWorkerTerminal(delivery.response_text, delivery);
       if (!parsed.ok) {
         delivery = await Store.annotateProtocolFailure({
           delivery_id: delivery.delivery_id,
@@ -319,21 +320,18 @@
         actor_id: message.actor_id,
         fence: message.fence,
         envelope: parsed.envelope,
-        response_text: candidate.text,
         boot_id: BOOT_ID
       });
       return { ok: true, ...captured, terminal: true, task_terminal: true };
     }
 
     if (delivery.state === "RESPONSE_RECEIVED") {
-      const candidate = candidateByIdentity(snapshot, delivery.assistant_candidate?.identity_key);
-      if (!candidate) return { ok: true, delivery, terminal: true, task_terminal: false, protocol_error: delivery.terminal_error || "protocol.response_unavailable" };
-      const parsed = Core.parseWorkerTerminal(candidate.text, delivery);
+      const parsed = Core.parseWorkerTerminal(delivery.response_text, delivery);
       if (!parsed.ok) {
         delivery = await Store.annotateProtocolFailure({ delivery_id: delivery.delivery_id, actor_id: message.actor_id, fence: message.fence, code: parsed.code, boot_id: BOOT_ID });
         return { ok: true, delivery, terminal: true, task_terminal: false, protocol_error: parsed.code };
       }
-      const captured = await Store.captureDoneAndAck({ delivery_id: delivery.delivery_id, actor_id: message.actor_id, fence: message.fence, envelope: parsed.envelope, response_text: candidate.text, boot_id: BOOT_ID });
+      const captured = await Store.captureDoneAndAck({ delivery_id: delivery.delivery_id, actor_id: message.actor_id, fence: message.fence, envelope: parsed.envelope, boot_id: BOOT_ID });
       return { ok: true, ...captured, terminal: true, task_terminal: true };
     }
 
