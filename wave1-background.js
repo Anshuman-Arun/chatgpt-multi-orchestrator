@@ -294,11 +294,13 @@
       }
       if (!candidate) return { ok: true, delivery, terminal: false, waiting_for: "assistant_candidate" };
       const textHash = await Core.sha256Hex(Core.normalizeText(candidate.text));
-      if (textHash !== delivery.assistant_text_hash) {
+      const identityChanged = String(candidate.identity_key || "") !== String(delivery.assistant_candidate?.identity_key || "");
+      if (identityChanged || textHash !== delivery.assistant_text_hash) {
         delivery = await Store.recordAssistantMutation({
           delivery_id: delivery.delivery_id,
           actor_id: message.actor_id,
           fence: message.fence,
+          candidate,
           text_hash: textHash,
           boot_id: BOOT_ID
         });
