@@ -443,7 +443,7 @@
       const timestamp = now();
       const delivery = await readDelivery(tx, delivery_id);
       if (delivery.state !== "SUBMITTING") throw new Error(`Send is impossible from ${delivery.state}`);
-      await assertFence(tx, delivery, actor_id, fence, { requireFresh: true, at: timestamp });
+      const lease = await assertFence(tx, delivery, actor_id, fence, { requireFresh: true, at: timestamp });
       if (!authorization_id || delivery.send_authorization_id !== authorization_id) throw new Error("Wave-1 send authorization does not match durable state");
       if (delivery.send_consumed_at) {
         const error = new Error("Wave-1 send authorization was already consumed");
@@ -472,6 +472,7 @@
           conversation_id: delivery.conversation_id,
           provider_locator: delivery.provider_locator,
           lease_fence: Number(fence),
+          lease_expires_at: Number(lease.expires_at),
           authorization_id,
           consumed_at: timestamp
         }
