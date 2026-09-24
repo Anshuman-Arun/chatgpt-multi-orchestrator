@@ -204,3 +204,24 @@ test('assistant identity replacement resets quiescence and updates durable candi
   assert.match(branch, /delivery\.assistant_candidate\?\.identity_key/);
   assert.match(branch, /Store\.recordAssistantMutation/);
 });
+
+
+test('composer readback uses exact canonical text and an exact payload hash', () => {
+  const domSource = read('wave1-dom.js');
+  const storeSource = read('wave1-store.js');
+  const backgroundSource = read('wave1-background.js');
+
+  const exactStart = domSource.indexOf('function composerForExactPayload');
+  const exactEnd = domSource.indexOf('function writeComposerExact', exactStart);
+  const exact = domSource.slice(exactStart, exactEnd);
+  assert.match(exact, /rawComposerText/);
+  assert.match(exact, /Core\.canonicalText/);
+  assert.doesNotMatch(exact, /Core\.normalizeText/);
+
+  assert.match(storeSource, /payload_exact_hash/);
+  const filledStart = backgroundSource.indexOf('async function handleComposerFilled');
+  const filledEnd = backgroundSource.indexOf('async function handleFailPreSend', filledStart);
+  const filled = backgroundSource.slice(filledStart, filledEnd);
+  assert.match(filled, /payload_exact_hash/);
+  assert.match(filled, /Core\.canonicalText/);
+});
