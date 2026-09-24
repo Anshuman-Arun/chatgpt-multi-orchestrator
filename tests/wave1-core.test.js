@@ -188,3 +188,23 @@ test("assistant causality re-anchors the owned user turn after DOM reorder", () 
     "new-assistant"
   );
 });
+
+
+test("assistant causality prefers exact owned user text when identity is replaced", () => {
+  const receipt = { turn: { identity_key: "gone", fingerprint: "weak-fp", order: 90 } };
+  const snapshot = {
+    turns: [
+      { role: "user", identity_key: "rehydrated", fingerprint: "different-fp", order: 3, text: "owned payload" },
+      { role: "assistant", identity_key: "answer", order: 4, text: "response" }
+    ]
+  };
+  assert.equal(
+    Core.selectAssistantCandidate({
+      baseline: { assistant_keys: [] },
+      receipt,
+      snapshot,
+      ownedUserText: "owned   payload"
+    })?.identity_key,
+    "answer"
+  );
+});
