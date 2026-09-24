@@ -146,3 +146,22 @@ test('DOM turn snapshots preserve substantive whitespace while comparisons norma
   assert.doesNotMatch(descriptor, /const text = Core\.normalizeText/);
   assert.match(descriptor, /Core\.fingerprint\(text\)/);
 });
+
+
+test('terminal Delivery failure states atomically update minimum task/run state', () => {
+  const source = read('wave1-store.js');
+
+  const failedStart = source.indexOf('async function failPreSend');
+  const failedEnd = source.indexOf('async function authorizeSend', failedStart);
+  assert.ok(failedStart >= 0 && failedEnd > failedStart);
+  const failed = source.slice(failedStart, failedEnd);
+  assert.match(failed, /"tasks", "runs"/);
+  assert.match(failed, /status: "FAILED"/);
+
+  const unknownStart = source.indexOf('async function markDeliveryUnknown');
+  const unknownEnd = source.indexOf('async function markDelivered', unknownStart);
+  assert.ok(unknownStart >= 0 && unknownEnd > unknownStart);
+  const unknown = source.slice(unknownStart, unknownEnd);
+  assert.match(unknown, /"tasks", "runs"/);
+  assert.match(unknown, /status: "BLOCKED"/);
+});
