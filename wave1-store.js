@@ -224,6 +224,7 @@
     };
     const payload = Core.buildRouterPayload({ ...context, instruction });
     const payloadHash = await Core.sha256Hex(Core.normalizeText(payload));
+    const payloadExactHash = await Core.sha256Hex(Core.canonicalText(payload));
     return withTransaction(["runs", "tasks", "conversation_bindings", "deliveries", "meta", "events"], "readwrite", async (tx) => {
       const bindings = store(tx, "conversation_bindings");
       const currentBinding = await requestPromise(bindings.get(cid));
@@ -257,6 +258,7 @@
         protocol_version: Core.PROTOCOL_VERSION,
         payload,
         payload_hash: payloadHash,
+        payload_exact_hash: payloadExactHash,
         state: "PENDING",
         actor_id: "",
         lease_fence: 0,
@@ -283,7 +285,7 @@
         next_state: "PENDING",
         reason: "DELIVERY_CREATED",
         boot_id,
-        evidence: { payload_hash: payloadHash, conversation_seq: context.conversation_seq }
+        evidence: { payload_hash: payloadHash, payload_exact_hash: payloadExactHash, conversation_seq: context.conversation_seq }
       });
       return delivery;
     });
