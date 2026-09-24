@@ -51,3 +51,18 @@ test('content send sequence consumes durable authorization before invoking the a
   assert.ok(invoke > consume);
   assert.match(source.slice(consume, invoke), /if \(!consumed\.ok\)/);
 });
+
+
+test('authorized Send permit is lease-bounded and rechecks UI idleness at actuation time', () => {
+  const storeSource = read('wave1-store.js');
+  const domSource = read('wave1-dom.js');
+  assert.match(storeSource, /lease_expires_at:\s*Number\(lease\.expires_at\)/);
+  const start = domSource.indexOf('function invokeAuthorizedSend');
+  const end = domSource.indexOf('return Object.freeze', start);
+  assert.ok(start >= 0 && end > start);
+  const actuator = domSource.slice(start, end);
+  assert.match(actuator, /permit\.lease_expires_at/);
+  assert.match(actuator, /Date\.now\(\)/);
+  assert.match(actuator, /Platforms\.isGenerating/);
+  assert.match(actuator, /classifyError/);
+});
