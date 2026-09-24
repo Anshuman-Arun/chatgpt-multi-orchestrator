@@ -594,7 +594,7 @@
     });
   }
 
-  async function markResponseReceived({ delivery_id, actor_id, fence, response_text_hash, completion_evidence, boot_id = "" }) {
+  async function markResponseReceived({ delivery_id, actor_id, fence, response_text = "", response_text_hash, completion_evidence, boot_id = "" }) {
     return transitionWithEvidence({
       delivery_id,
       actor_id,
@@ -605,7 +605,12 @@
       boot_id,
       require_fresh: false,
       evidence: { response_text_hash, quiet_ms: completion_evidence?.quiet_ms || 0, generating: completion_evidence?.generating || false },
-      mutate: (delivery, timestamp) => ({ ...delivery, response_text_hash: String(response_text_hash || ""), response_received_at: timestamp })
+      mutate: (delivery, timestamp) => ({
+        ...delivery,
+        response_text: String(delivery.response_text || ""),
+        response_text_hash: String(response_text_hash || ""),
+        response_received_at: timestamp
+      })
     });
   }
 
@@ -634,7 +639,7 @@
     });
   }
 
-  async function captureDoneAndAck({ delivery_id, actor_id, fence, envelope, response_text = "", boot_id = "" }) {
+  async function captureDoneAndAck({ delivery_id, actor_id, fence, envelope, boot_id = "" }) {
     return withTransaction(["deliveries", "leases", "worker_results", "tasks", "runs", "meta", "events"], "readwrite", async (tx) => {
       const timestamp = now();
       let delivery = await readDelivery(tx, delivery_id);
