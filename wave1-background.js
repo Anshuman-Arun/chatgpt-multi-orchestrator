@@ -202,6 +202,48 @@
     return { ok: true, delivery: next };
   }
 
+  async function handleResolveSendUncertainty(message) {
+    let delivery = await Store.getDelivery(message.delivery_id);
+    if (!delivery) throw new Error("Wave-1 Delivery was not found");
+    const evidence = message.evidence || {};
+    const reason = message.reason || "SEND_BOUNDARY_ACK_UNCERTAIN";
+
+    if (delivery.state === "COMPOSER_FILLED") {
+      delivery = await Store.failPreSend({
+        delivery_id: delivery.delivery_id,
+        actor_id: message.actor_id,
+        fence: message.fence,
+        reason: `${reason}_BEFORE_SUBMITTING`,
+        boot_id: BOOT_ID,
+        evidence
+      });
+      return { ok: true, delivery, terminal: true, ambiguity: false };
+    }
+
+    if (["SUBMITTING", "SENT_UNCONFIRMED"].includes(delivery.state)) {
+      delivery = await Store.markDeliveryUnknown({
+        delivery_id: delivery.delivery_id,
+        actor_id: message.actor_id,
+        fence: message.fence,
+        reason,
+        boot_id: BOOT_ID,
+        evidence
+      });
+      return { ok: true, delivery, terminal: true, ambiguity: true };
+    }
+
+    if (["FAILED", "DELIVERY_UNKNOWN"].includes(delivery.state)) {
+      return { ok: true, delivery, terminal: true, ambiguity: delivery.state === "DELIVERY_UNKNOWN" };
+    }
+
+    return {
+      ok: false,
+      code: "wave1.uncertainty_state_unexpected",
+      reason: `Cannot resolve send uncertainty from ${delivery.state}`,
+      delivery
+    };
+  }
+
   async function reconcile(message, sender) {
     let delivery = await Store.getDelivery(message.delivery_id);
     if (!delivery) throw new Error("Wave-1 Delivery was not found");
@@ -435,6 +477,7 @@
       case "WAVE1_CONSUME_SEND": return handleConsume(message, sender);
       case "WAVE1_MARK_SENT_UNCONFIRMED": return handleSent(message, sender);
       case "WAVE1_MARK_DELIVERY_UNKNOWN": return handleUnknown(message, sender);
+      case "WAVE1_RESOLVE_SEND_UNCERTAINTY": return handleResolveSendUncertainty(message);
       case "WAVE1_RECONCILE": return reconcile(message, sender);
       case "WAVE1_JOURNAL": return handleJournal(message, sender);
       default: return { ok: false, code: "wave1.message_unknown", reason: "Unknown Wave-1 operation" };
