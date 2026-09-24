@@ -91,3 +91,25 @@ test('ACK persists the substantive assistant response in worker_results', () => 
   assert.ok(firstCall >= 0);
   assert.match(backgroundSource.slice(firstCall, firstCall + 700), /response_text:\s*candidate\.text/);
 });
+
+
+test('RESPONSE_RECEIVED durably snapshots assistant text before terminal ACK', () => {
+  const storeSource = read('wave1-store.js');
+  const backgroundSource = read('wave1-background.js');
+
+  const receivedStart = storeSource.indexOf('async function markResponseReceived');
+  const receivedEnd = storeSource.indexOf('async function annotateProtocolFailure', receivedStart);
+  assert.ok(receivedStart >= 0 && receivedEnd > receivedStart);
+  const received = storeSource.slice(receivedStart, receivedEnd);
+  assert.match(received, /response_text:\s*String\(response_text\s*\|\|\s*""\)/);
+
+  const transitionCall = backgroundSource.indexOf('Store.markResponseReceived');
+  assert.ok(transitionCall >= 0);
+  assert.match(backgroundSource.slice(transitionCall, transitionCall + 900), /response_text:\s*candidate\.text/);
+
+  const responseReceivedBranch = backgroundSource.indexOf('if \(delivery.state === "RESPONSE_RECEIVED"\)');
+  assert.ok(responseReceivedBranch >= 0);
+  const branch = backgroundSource.slice(responseReceivedBranch, responseReceivedBranch + 1800);
+  assert.match(branch, /Core\.parseWorkerTerminal\(delivery\.response_text, delivery\)/);
+  assert.doesNotMatch(branch, /if \(!candidate\)/);
+});
