@@ -129,10 +129,10 @@
     if (snapshot.route_identity !== delivery.provider_locator) throw new Error("Wave-1 route changed while filling composer");
     if (!snapshot.composer_present) throw new Error("ChatGPT composer disappeared while filling");
     if (snapshot.generating || snapshot.error_code) throw new Error("ChatGPT became non-idle while filling composer");
-    const comparable = Core.normalizeText(snapshot.composer_text);
-    if (comparable !== Core.normalizeText(delivery.payload)) throw new Error("Wave-1 exact composer readback failed");
-    const composerHash = await Core.sha256Hex(comparable);
-    if (composerHash !== delivery.payload_hash) throw new Error("Wave-1 composer SHA-256 does not match the durable payload");
+    const exactComposer = Core.canonicalText(snapshot.composer_text);
+    if (exactComposer !== Core.canonicalText(delivery.payload)) throw new Error("Wave-1 exact composer readback failed");
+    const composerHash = await Core.sha256Hex(exactComposer);
+    if (composerHash !== delivery.payload_exact_hash) throw new Error("Wave-1 exact composer SHA-256 does not match the durable payload");
     if (newUserTurns(delivery, snapshot).length) throw new Error("A foreign user turn appeared before Wave-1 Send authorization");
     const next = await Store.markComposerFilled({
       delivery_id: delivery.delivery_id,
