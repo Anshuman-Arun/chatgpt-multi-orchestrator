@@ -300,3 +300,27 @@ test('Wave-1 suppresses reconciliation during the consume-to-Send critical secti
   assert.ok(criticalOn >= 0 && consume > criticalOn && invoke > consume && markSent > invoke && criticalOff > markSent);
   assert.match(execute, /finally\s*\{[\s\S]*sendCriticalSection = false/);
 });
+
+
+test('lost send-boundary acknowledgements resolve from authoritative durable state', () => {
+  const backgroundSource = read('wave1-background.js');
+  const contentSource = read('wave1-content.js');
+
+  const handlerStart = backgroundSource.indexOf('async function handleResolveSendUncertainty');
+  const handlerEnd = backgroundSource.indexOf('async function reconcile', handlerStart);
+  assert.ok(handlerStart >= 0 && handlerEnd > handlerStart);
+  const handler = backgroundSource.slice(handlerStart, handlerEnd);
+  assert.match(handler, /COMPOSER_FILLED/);
+  assert.match(handler, /Store\.failPreSend/);
+  assert.match(handler, /SUBMITTING/);
+  assert.match(handler, /SENT_UNCONFIRMED/);
+  assert.match(handler, /Store\.markDeliveryUnknown/);
+
+  assert.match(backgroundSource, /WAVE1_RESOLVE_SEND_UNCERTAINTY/);
+
+  const executeStart = contentSource.indexOf('async function executeDelivery');
+  const executeEnd = contentSource.indexOf('async function createAndRun', executeStart);
+  const execute = contentSource.slice(executeStart, executeEnd);
+  assert.match(execute, /resolveSendUncertainty/);
+  assert.doesNotMatch(execute, /SUBMITTING_AUTHORIZATION_ACK_UNKNOWN[\s\S]{0,700}Dom\.invokeAuthorizedSend/);
+});
