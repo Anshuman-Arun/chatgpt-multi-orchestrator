@@ -33,10 +33,17 @@
   }
 
   function newUserTurns(delivery, snapshot) {
-    const baseline = new Set(Array.isArray(delivery?.baseline?.user_keys) ? delivery.baseline.user_keys : []);
+    const baselineUsers = Array.isArray(delivery?.baseline?.user_keys) ? delivery.baseline.user_keys : [];
+    const baselineAssistants = Array.isArray(delivery?.baseline?.assistant_keys) ? delivery.baseline.assistant_keys : [];
+    const baseline = new Set(baselineUsers);
+    const tailKey = String(delivery?.baseline?.tail_key || "");
+    if (!tailKey && baselineUsers.length === 0 && baselineAssistants.length === 0) {
+      return (Array.isArray(snapshot?.turns) ? snapshot.turns : [])
+        .filter((turn) => turn?.role === "user");
+    }
     return Core.turnsAfterAnchor(
       snapshot,
-      delivery?.baseline?.tail_key,
+      tailKey,
       "user",
       delivery?.baseline?.tail_fingerprint
     ).filter((turn) => !baseline.has(String(turn.identity_key || "")));
