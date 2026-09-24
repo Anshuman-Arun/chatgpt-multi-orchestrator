@@ -261,6 +261,30 @@
       }
     }
 
+    if (["DELIVERED", "RESPONSE_STARTED"].includes(delivery.state)) {
+      const foreignAfterOwned = Core.turnsAfterAnchor(
+        snapshot,
+        delivery.user_receipt?.identity_key,
+        "user",
+        delivery.user_receipt?.fingerprint,
+        delivery.payload
+      );
+      if (foreignAfterOwned.length) {
+        delivery = await Store.markResponseSuperseded({
+          delivery_id: delivery.delivery_id,
+          actor_id: message.actor_id,
+          fence: message.fence,
+          reason: "FOREIGN_USER_TURN_AFTER_OWNED_RECEIPT",
+          boot_id: BOOT_ID,
+          evidence: {
+            foreign_user_turns: foreignAfterOwned.length,
+            first_foreign_identity: foreignAfterOwned[0]?.identity_key || ""
+          }
+        });
+        return { ok: true, delivery, terminal: true, task_terminal: false, response_superseded: true };
+      }
+    }
+
     if (["DELIVERED", "RESPONSE_STARTED"].includes(delivery.state) && snapshot.error_code) {
       delivery = await Store.markResponseFailed({
         delivery_id: delivery.delivery_id,
