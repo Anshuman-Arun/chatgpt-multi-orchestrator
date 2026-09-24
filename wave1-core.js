@@ -116,9 +116,13 @@
     return new Set(Array.isArray(values) ? values.map(String) : []);
   }
 
-  function turnsAfterAnchor(snapshot, anchorIdentity, role = "") {
+  function turnsAfterAnchor(snapshot, anchorIdentity, role = "", anchorFingerprint = "") {
     const turns = Array.isArray(snapshot?.turns) ? snapshot.turns : [];
-    const anchor = turns.find((turn) => String(turn?.identity_key || "") === String(anchorIdentity || ""));
+    const exact = turns.find((turn) => String(turn?.identity_key || "") === String(anchorIdentity || ""));
+    const fingerprintMatches = anchorFingerprint
+      ? turns.filter((turn) => String(turn?.fingerprint || "") === String(anchorFingerprint))
+      : [];
+    const anchor = exact || (fingerprintMatches.length === 1 ? fingerprintMatches[0] : null);
     if (!anchor) return [];
     return turns
       .filter((turn) => Number(turn?.order) > Number(anchor.order))
