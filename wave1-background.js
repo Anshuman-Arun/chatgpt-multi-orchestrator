@@ -236,6 +236,11 @@
     if (["SUBMITTING", "SENT_UNCONFIRMED"].includes(delivery.state)) {
       const receipt = await Core.findOwnedUserReceipt({ delivery, baseline: delivery.baseline, snapshot });
       if (receipt.ok) {
+        const appendedUsers = newUserTurns(delivery, snapshot);
+        const foreignUsers = appendedUsers.filter((turn) => (
+          String(turn.identity_key || "") !== String(receipt.turn.identity_key || "")
+          && Core.normalizeText(turn.text) !== Core.normalizeText(delivery.payload)
+        ));
         delivery = await Store.markDelivered({
           delivery_id: delivery.delivery_id,
           actor_id: message.actor_id,
@@ -243,6 +248,20 @@
           receipt: receipt.turn,
           boot_id: BOOT_ID
         });
+        if (foreignUsers.length) {
+          delivery = await Store.markResponseSuperseded({
+            delivery_id: delivery.delivery_id,
+            actor_id: message.actor_id,
+            fence: message.fence,
+            reason: "FOREIGN_USER_TURN_IN_DELIVERY_WINDOW",
+            boot_id: BOOT_ID,
+            evidence: {
+              foreign_user_turns: foreignUsers.length,
+              first_foreign_identity: foreignUsers[0]?.identity_key || ""
+            }
+          });
+          return { ok: true, delivery, terminal: true, task_terminal: false, response_superseded: true };
+        }
       } else {
         const foreign = newUserTurns(delivery, snapshot);
         const elapsed = Date.now() - Math.max(0, Number(delivery.send_consumed_at) || 0);
