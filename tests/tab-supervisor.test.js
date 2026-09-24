@@ -139,3 +139,16 @@ test("listener catches and logs onActivated tab inspection rejection", async () 
   assert.equal(errors.length, 1);
   assert.match(errors[0], /Tab supervisor activated-tab inspection failed:/);
 });
+
+
+test("fallback reinjection includes shared runtime before dependent content scripts", () => {
+  const scriptsMatch = source.match(/const SCRIPT_FILES = Object\.freeze\(\[([\s\S]*?)\]\);/);
+  assert.ok(scriptsMatch);
+  const scripts = Array.from(scriptsMatch[1].matchAll(/"([^"]+\.js)"/g), (match) => match[1]);
+  const sharedIndex = scripts.indexOf("shared.js");
+  const contentIndex = scripts.indexOf("content.js");
+  const wave1Index = scripts.indexOf("wave1-content.js");
+  assert.ok(sharedIndex >= 0);
+  assert.ok(sharedIndex < contentIndex);
+  assert.ok(sharedIndex < wave1Index);
+});
