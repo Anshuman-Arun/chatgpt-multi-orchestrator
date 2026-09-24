@@ -208,3 +208,12 @@ test("assistant causality prefers exact owned user text when identity is replace
     "answer"
   );
 });
+
+
+test("terminal parser rejects type-coercible malformed schema values", () => {
+  assert.equal(Core.parseWorkerTerminal(doneBlock({ run_id: ["run_test"] }), ids).ok, false);
+  assert.equal(Core.parseWorkerTerminal(doneBlock({ task_id: { toString: "task_test" } }), ids).ok, false);
+  assert.equal(Core.parseWorkerTerminal(doneBlock({ conversation_seq: "1" }), ids).ok, false);
+  assert.equal(Core.parseWorkerTerminal(doneBlock({ protocol_version: "1" }), ids).ok, false);
+  assert.equal(Core.parseWorkerTerminal(doneBlock({ status: ["DONE"] }), ids).ok, false);
+});
