@@ -29,7 +29,7 @@ The Wave-1 path is:
 
 `COMPOSER_FILLED` is definitely not sent. `SUBMITTING` is the ambiguity boundary.
 
-The store creates a durable `send_authorization_id` while transitioning to `SUBMITTING`. Immediately before DOM actuation, a second IndexedDB transaction validates the current sender fence and atomically consumes that one-shot authorization. Only the resulting permit can enter `invokeAuthorizedSend`, the sole Wave-1 DOM function that calls either the explicit Send button or `form.requestSubmit()`.
+The store creates a durable `send_authorization_id` while transitioning to `SUBMITTING`. Immediately before DOM actuation, a second IndexedDB transaction validates the current sender fence and atomically consumes that one-shot authorization. Only the resulting permit can enter `invokeAuthorizedSend`, the sole Wave-1 DOM function that delegates to YOLO's Send actuator. The permit carries the durable lease expiry; immediately before actuation the DOM adapter rechecks that the permit is still fresh, the exact route and composer payload still match, generation/thinking is inactive, and no recognized error state is visible.
 
 If authorization consumption, DOM actuation, or post-actuation acknowledgement becomes uncertain, the Delivery is not returned to a pre-send state and Send is never retried automatically.
 
@@ -48,7 +48,7 @@ Wave 1 adds semantic snapshots containing:
 
 Correctness logic consumes these normalized snapshots in the background; selectors do not appear in the durable state machine.
 
-A positive user receipt requires all of:
+The persisted baseline retains every currently rendered user/assistant identity rather than truncating to an arbitrary last-N window. A positive user receipt requires all of:
 
 1. exact bound route;
 2. a non-baseline user-turn identity;
@@ -75,7 +75,7 @@ Wave 1 accepts only the `DONE` worker status. The final non-whitespace response 
 <<<END:MULTIAGENT:WORKER:v1>>>
 ```
 
-For Wave 1, that JSON object has exactly the nine fields shown above. Every controller-owned ID, sequence, and protocol version must match the current Delivery. Extra action/recipient fields, stale IDs, multiple blocks, malformed JSON, a nonterminal block, or content after the end sentinel are rejected. Invalid/missing protocol leaves the turn at `RESPONSE_RECEIVED` with a journaled nonterminal reason; it is not ACKed as task success.
+For Wave 1, that JSON object has exactly the nine fields shown above. Duplicate top-level JSON keys are rejected before `JSON.parse` acceptance. Every controller-owned ID, sequence, and protocol version must match the current Delivery. Extra action/recipient fields, stale IDs, multiple blocks, malformed JSON, a nonterminal block, or content after the end sentinel are rejected. Invalid/missing protocol leaves the turn at `RESPONSE_RECEIVED` with a journaled nonterminal reason; it is not ACKed as task success.
 
 ## Recovery boundary for this wave
 
