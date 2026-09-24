@@ -582,13 +582,21 @@
     });
   }
 
-  async function recordAssistantMutation({ delivery_id, actor_id, fence, text_hash, boot_id = "" }) {
+  async function recordAssistantMutation({ delivery_id, actor_id, fence, candidate = null, text_hash, boot_id = "" }) {
     return withTransaction(["deliveries", "leases", "meta", "events"], "readwrite", async (tx) => {
       const timestamp = now();
       const delivery = await readDelivery(tx, delivery_id);
       if (delivery.state !== "RESPONSE_STARTED") return delivery;
       await assertFence(tx, delivery, actor_id, fence, { requireFresh: false, at: timestamp });
-      if (delivery.assistant_text_hash === text_hash) return delivery;
+      const nextIdentity = String(candidate?.identity_key || delivery.assistant_candidate?.identity_key || "");
+      const identityChanged = nextIdentity !== String(delivery.assistant_candidate?.identity_key || "");
+      const textChanged = delivery.assistant_text_hash !== String(text_hash || "");
+      if (!identityChanged && !textChanged) return delivery;
+      delivery.assistant_candidate = {
+        identity_key: nextIdentity,
+        identity_kind: String(candidate?.identity_kind || delivery.assistant_candidate?.identity_kind || ""),
+        order: Number(candidate?.order ?? delivery.assistant_candidate?.order) || 0
+      };
       delivery.assistant_text_hash = String(text_hash || "");
       delivery.assistant_last_changed_at = timestamp;
       delivery.updated_at = timestamp;
@@ -598,11 +606,11 @@
         previous_state: "RESPONSE_STARTED",
         next_state: "RESPONSE_STARTED",
         event_type: "ASSISTANT_MUTATED",
-        reason: "ASSISTANT_OUTPUT_CHANGED",
+        reason: identityChanged ? "ASSISTANT_IDENTITY_CHANGED" : "ASSISTANT_OUTPUT_CHANGED",
         actor_id,
         boot_id,
         lease_fence: fence,
-        evidence: { text_hash }
+        evidence: { text_hash, identity_changed: identityChanged, assistant_identity: nextIdentity }
       });
       return delivery;
     });
