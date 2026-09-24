@@ -261,6 +261,21 @@
       }
     }
 
+    if (["DELIVERED", "RESPONSE_STARTED"].includes(delivery.state) && snapshot.error_code) {
+      delivery = await Store.markResponseFailed({
+        delivery_id: delivery.delivery_id,
+        actor_id: message.actor_id,
+        fence: message.fence,
+        error_code: snapshot.error_code,
+        boot_id: BOOT_ID,
+        evidence: {
+          route_fingerprint: Core.fingerprint(snapshot.route_identity || ""),
+          assistant_identity: delivery.assistant_candidate?.identity_key || ""
+        }
+      });
+      return { ok: true, delivery, terminal: true, task_terminal: false, response_error: snapshot.error_code };
+    }
+
     if (delivery.state === "DELIVERED") {
       const candidate = Core.selectAssistantCandidate({
         baseline: delivery.baseline,
