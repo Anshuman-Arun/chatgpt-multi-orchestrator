@@ -310,11 +310,16 @@
       return { ok: false, code: "protocol.schema_keys" };
     }
     const expected = currentContext(expectedInput || {});
+    for (const key of ["run_id", "task_id", "logical_agent_id", "slot_id", "conversation_id", "delivery_id", "status"]) {
+      if (typeof envelope[key] !== "string") return { ok: false, code: `protocol.type.${key}` };
+    }
+    if (!Number.isInteger(envelope.protocol_version)) return { ok: false, code: "protocol.type.protocol_version" };
+    if (!Number.isInteger(envelope.conversation_seq)) return { ok: false, code: "protocol.type.conversation_seq" };
     if (envelope.status !== "DONE") return { ok: false, code: "protocol.wave1_status" };
     if (envelope.protocol_version !== PROTOCOL_VERSION) return { ok: false, code: "protocol.version" };
     if (envelope.conversation_seq !== expected.conversation_seq) return { ok: false, code: "protocol.conversation_seq" };
     for (const key of ["run_id", "task_id", "logical_agent_id", "slot_id", "conversation_id", "delivery_id"]) {
-      if (String(envelope[key] || "") !== String(expected[key] || "")) return { ok: false, code: `protocol.${key}` };
+      if (envelope[key] !== String(expected[key] || "")) return { ok: false, code: `protocol.${key}` };
     }
     return { ok: true, envelope, block: text.slice(startIndex) };
   }
