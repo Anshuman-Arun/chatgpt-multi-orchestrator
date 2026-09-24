@@ -21,7 +21,7 @@
     COMPOSER_FILLED: new Set(["SUBMITTING", "FAILED"]),
     SUBMITTING: new Set(["SENT_UNCONFIRMED", "DELIVERED", "DELIVERY_UNKNOWN"]),
     SENT_UNCONFIRMED: new Set(["DELIVERED", "DELIVERY_UNKNOWN"]),
-    DELIVERED: new Set(["RESPONSE_STARTED", "RESPONSE_FAILED"]),
+    DELIVERED: new Set(["RESPONSE_STARTED", "RESPONSE_FAILED", "RESPONSE_SUPERSEDED"]),
     RESPONSE_STARTED: new Set(["RESPONSE_RECEIVED", "RESPONSE_FAILED", "RESPONSE_SUPERSEDED"]),
     RESPONSE_RECEIVED: new Set(["ACKED"]),
     ACKED: new Set(),
@@ -119,13 +119,19 @@
     return new Set(Array.isArray(values) ? values.map(String) : []);
   }
 
-  function turnsAfterAnchor(snapshot, anchorIdentity, role = "", anchorFingerprint = "") {
+  function turnsAfterAnchor(snapshot, anchorIdentity, role = "", anchorFingerprint = "", anchorText = "") {
     const turns = Array.isArray(snapshot?.turns) ? snapshot.turns : [];
     const exact = turns.find((turn) => String(turn?.identity_key || "") === String(anchorIdentity || ""));
+    const normalizedAnchorText = normalizeText(anchorText);
+    const textMatches = normalizedAnchorText
+      ? turns.filter((turn) => normalizeText(turn?.text) === normalizedAnchorText)
+      : [];
     const fingerprintMatches = anchorFingerprint
       ? turns.filter((turn) => String(turn?.fingerprint || "") === String(anchorFingerprint))
       : [];
-    const anchor = exact || (fingerprintMatches.length === 1 ? fingerprintMatches[0] : null);
+    const anchor = exact
+      || (textMatches.length === 1 ? textMatches[0] : null)
+      || (fingerprintMatches.length === 1 ? fingerprintMatches[0] : null);
     if (!anchor) return [];
     return turns
       .filter((turn) => Number(turn?.order) > Number(anchor.order))
