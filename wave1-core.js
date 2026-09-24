@@ -154,7 +154,7 @@
     return { ok: false, code: candidates.length ? "receipt.no_exact_owned_turn" : "receipt.no_new_user_turn" };
   }
 
-  function selectAssistantCandidate({ baseline, receipt, snapshot, currentIdentity = "" }) {
+  function selectAssistantCandidate({ baseline, receipt, snapshot, currentIdentity = "", ownedUserText = "" }) {
     if (!receipt?.turn || !snapshot) return null;
     const turns = Array.isArray(snapshot.turns) ? snapshot.turns : [];
     const baselineAssistant = baselineKeys(baseline, "assistant");
@@ -171,10 +171,16 @@
     const receiptIdentity = String(receipt.turn.identity_key || "");
     const receiptFingerprint = String(receipt.turn.fingerprint || "");
     const exactAnchor = turns.find((turn) => turn?.role === "user" && String(turn.identity_key || "") === receiptIdentity);
+    const normalizedOwnedText = normalizeText(ownedUserText);
+    const ownedTextMatches = normalizedOwnedText
+      ? turns.filter((turn) => turn?.role === "user" && normalizeText(turn.text) === normalizedOwnedText)
+      : [];
     const fingerprintMatches = receiptFingerprint
       ? turns.filter((turn) => turn?.role === "user" && String(turn.fingerprint || "") === receiptFingerprint)
       : [];
-    const anchor = exactAnchor || (fingerprintMatches.length === 1 ? fingerprintMatches[0] : null);
+    const anchor = exactAnchor
+      || (ownedTextMatches.length === 1 ? ownedTextMatches[0] : null)
+      || (fingerprintMatches.length === 1 ? fingerprintMatches[0] : null);
     if (!anchor) return null;
 
     return assistants.find((turn) => Number(turn.order) > Number(anchor.order)) || null;
