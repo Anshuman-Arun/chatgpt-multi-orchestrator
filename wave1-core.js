@@ -31,9 +31,12 @@
     RESPONSE_SUPERSEDED: new Set()
   });
 
+  function canonicalText(value) {
+    return String(value ?? "").replace(/\r\n?/g, "\n");
+  }
+
   function normalizeText(value) {
-    return String(value ?? "")
-      .replace(/\r\n?/g, "\n")
+    return canonicalText(value)
       .replace(/[^\S\n]+/g, " ")
       .replace(/ *\n */g, "\n")
       .replace(/\n{3,}/g, "\n\n")
@@ -353,6 +356,7 @@
     WORKER_END,
     DELIVERY_STATES,
     TRANSITIONS,
+    canonicalText,
     normalizeText,
     fingerprint,
     sha256Hex,
