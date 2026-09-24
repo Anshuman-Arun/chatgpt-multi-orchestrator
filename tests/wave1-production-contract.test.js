@@ -183,3 +183,24 @@ test('legacy YOLO send path is disabled once a conversation is Wave-1 bound', ()
   assert.match(sendRegion, /await wave1BindingBlocksLegacySend\(actionPageId\)/);
   assert.match(sendRegion, /wave1\.conversation_reserved/);
 });
+
+
+test('assistant identity replacement resets quiescence and updates durable candidate', () => {
+  const storeSource = read('wave1-store.js');
+  const backgroundSource = read('wave1-background.js');
+
+  const mutationStart = storeSource.indexOf('async function recordAssistantMutation');
+  const mutationEnd = storeSource.indexOf('async function markResponseReceived', mutationStart);
+  assert.ok(mutationStart >= 0 && mutationEnd > mutationStart);
+  const mutation = storeSource.slice(mutationStart, mutationEnd);
+  assert.match(mutation, /identityChanged/);
+  assert.match(mutation, /assistant_candidate:/);
+  assert.match(mutation, /assistant_last_changed_at = timestamp|assistant_last_changed_at:\s*timestamp/);
+
+  const responseStart = backgroundSource.indexOf('if (delivery.state === "RESPONSE_STARTED")');
+  const responseEnd = backgroundSource.indexOf('if (delivery.state === "RESPONSE_RECEIVED")', responseStart);
+  const branch = backgroundSource.slice(responseStart, responseEnd);
+  assert.match(branch, /candidate\.identity_key/);
+  assert.match(branch, /delivery\.assistant_candidate\?\.identity_key/);
+  assert.match(branch, /Store\.recordAssistantMutation/);
+});
