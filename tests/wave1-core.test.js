@@ -217,3 +217,10 @@ test("terminal parser rejects type-coercible malformed schema values", () => {
   assert.equal(Core.parseWorkerTerminal(doneBlock({ protocol_version: "1" }), ids).ok, false);
   assert.equal(Core.parseWorkerTerminal(doneBlock({ status: ["DONE"] }), ids).ok, false);
 });
+
+
+test("canonical composer text preserves whitespace while normalizing line endings only", () => {
+  assert.equal(Core.canonicalText("a  b\r\nc"), "a  b\nc");
+  assert.notEqual(Core.canonicalText("a  b"), Core.canonicalText("a b"));
+  assert.equal(Core.normalizeText("a  b"), Core.normalizeText("a b"));
+});
