@@ -122,3 +122,15 @@ test('thinking detection excludes persistent composer controls and requires acti
   assert.match(thinking, /latestAssistantRoot/);
   assert.match(thinking, /role='status'|role === "status"/);
 });
+
+
+test('error classification ignores stale historical turn errors', () => {
+  const source = read('wave1-dom.js');
+  const start = source.indexOf('function classifyError');
+  const end = source.indexOf('function sendPath', start);
+  assert.ok(start >= 0 && end > start);
+  const classify = source.slice(start, end);
+  assert.match(classify, /latestTurnRoot/);
+  assert.match(classify, /containingTurn/);
+  assert.match(classify, /if \(containingTurn && containingTurn !== latestTurnRoot\) continue/);
+});
