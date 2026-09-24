@@ -118,3 +118,16 @@ test("journal reconstruction requires monotonic sequence and returns the exact t
   assert.deepEqual(result.states, ["PENDING", "CLAIMED", "COMPOSER_FILLING"]);
   assert.equal(Core.reconstructDelivery([events[1], events[0]], ids.delivery_id).ok, false);
 });
+
+
+test("terminal parser rejects duplicate top-level JSON keys", () => {
+  const response = [
+    "Worker prose.",
+    "<<<MULTIAGENT:WORKER:v1>>>",
+    '{"protocol_version":1,"run_id":"run_test","run_id":"run_test","task_id":"task_test","logical_agent_id":"agent_test","slot_id":"slot_test","conversation_id":"conversation_test","delivery_id":"delivery_test","conversation_seq":1,"status":"DONE"}',
+    "<<<END:MULTIAGENT:WORKER:v1>>>"
+  ].join("\n");
+  const parsed = Core.parseWorkerTerminal(response, ids);
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.code, "protocol.duplicate_key");
+});
