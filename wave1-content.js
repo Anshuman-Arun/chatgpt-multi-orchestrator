@@ -114,19 +114,35 @@
     return response;
   }
 
-  async function markUnknown(deliveryId, fence, reason, evidence = {}) {
-    const response = await runtimeSend({
-      type: "WAVE1_MARK_DELIVERY_UNKNOWN",
-      delivery_id: deliveryId,
-      actor_id: actorId,
-      fence,
-      reason,
-      evidence
-    });
-    active = null;
-    stopPolling();
-    setStatus(response.ok ? stateSummary(response.delivery, "Ambiguous send stopped safely; no automatic resend will occur.") : `Send is ambiguous and could not be journaled immediately: ${compactError(response)}`, "error");
-    return response;
+  async function resolveSendUncertainty(deliveryId, fence, reason, evidence = {}) {
+    let response = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      response = await runtimeSend({
+        type: "WAVE1_RESOLVE_SEND_UNCERTAINTY",
+        delivery_id: deliveryId,
+        actor_id: actorId,
+        fence,
+        reason,
+        evidence
+      });
+      if (response?.ok) break;
+      if (attempt < 2) await sleep(150 * (attempt + 1));
+    }
+    if (response?.ok) {
+      active = null;
+      stopPolling();
+      const message = response.delivery?.state === "DELIVERY_UNKNOWN"
+        ? "Ambiguous send stopped safely; no automatic resend will occur."
+        : "Send was resolved as definitely pre-send; the Delivery was failed without sending.";
+      setStatus(stateSummary(response.delivery, message), "error");
+      return response;
+    }
+    if (active?.delivery_id === deliveryId) {
+      active.send_uncertain = { reason, evidence };
+      startPolling();
+    }
+    setStatus(`Send-boundary state is unresolved and will be reconciled without resend: ${compactError(response)}`, "error");
+    return response || { ok: false, code: "wave1.uncertainty_unresolved" };
   }
 
   function stopPolling() {
@@ -152,7 +168,8 @@
       delivery_id: active.delivery_id,
       actor_id: actorId,
       fence: active.fence,
-      snapshot
+      snapshot,
+      send_uncertain: active.send_uncertain || null
     });
     if (!response.ok) {
       setStatus(`Reconciliation paused: ${compactError(response)}`, "error");
@@ -232,18 +249,12 @@
 
     const authorized = await runtimeSend({ type: "WAVE1_AUTHORIZE_SEND", delivery_id: delivery.delivery_id, actor_id: actorId, fence });
     if (!authorized.ok) {
-      // A lost response may hide a committed COMPOSER_FILLED -> SUBMITTING transition.
-      // Read durable state before deciding whether this is still safely pre-send.
-      const durable = await runtimeSend({ type: "WAVE1_STATUS" });
-      if (durable?.delivery?.delivery_id === delivery.delivery_id && durable.delivery.state === "COMPOSER_FILLED") {
-        await failPreSend(delivery.delivery_id, fence, authorized.code || "SUBMITTING_AUTHORIZATION_FAILED");
-      } else if (durable?.delivery?.delivery_id === delivery.delivery_id && durable.delivery.state === "SUBMITTING") {
-        await markUnknown(delivery.delivery_id, fence, "SUBMITTING_AUTHORIZATION_ACK_UNKNOWN", { response_code: authorized.code || "" });
-      } else {
-        setStatus(`Send authorization outcome is uncertain: ${compactError(authorized)}. No Send will be attempted.`, "error");
-        active = null;
-        stopPolling();
-      }
+      await resolveSendUncertainty(
+        delivery.delivery_id,
+        fence,
+        "SUBMITTING_AUTHORIZATION_ACK_UNKNOWN",
+        { response_code: authorized.code || "" }
+      );
       return false;
     }
 
@@ -257,7 +268,7 @@
     if (!consumed.ok) {
       // Consumption itself is persisted before the side effect. A lost response therefore
       // makes the boundary ambiguous even though this actor will not invoke Send.
-      await markUnknown(delivery.delivery_id, fence, "SEND_CAPABILITY_CONSUME_ACK_UNKNOWN", { response_code: consumed.code || "" });
+      await resolveSendUncertainty(delivery.delivery_id, fence, "SEND_CAPABILITY_CONSUME_ACK_UNKNOWN", { response_code: consumed.code || "" });
       return false;
     }
 
@@ -268,7 +279,7 @@
       payload: delivery.payload
     });
     if (!invoked.ok) {
-      await markUnknown(delivery.delivery_id, fence, invoked.code || "SEND_ACTUATOR_FAILED");
+      await resolveSendUncertainty(delivery.delivery_id, fence, invoked.code || "SEND_ACTUATOR_FAILED");
       return false;
     }
 
@@ -330,7 +341,7 @@
         const current = await runtimeSend({ type: "WAVE1_STATUS" });
         const state = current?.delivery?.state;
         if (["SUBMITTING", "SENT_UNCONFIRMED"].includes(state)) {
-          await markUnknown(created.delivery.delivery_id, active.fence, "UNHANDLED_POST_SEND_EXCEPTION", { error_fingerprint: Core.fingerprint(error.message) });
+          await resolveSendUncertainty(created.delivery.delivery_id, active.fence, "UNHANDLED_POST_SEND_EXCEPTION", { error_fingerprint: Core.fingerprint(error.message) });
           return;
         }
         await failPreSend(created.delivery.delivery_id, active.fence, "UNHANDLED_PRE_SEND_EXCEPTION", { error_fingerprint: Core.fingerprint(error.message) });
