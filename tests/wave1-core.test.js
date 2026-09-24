@@ -131,3 +131,20 @@ test("terminal parser rejects duplicate top-level JSON keys", () => {
   assert.equal(parsed.ok, false);
   assert.equal(parsed.code, "protocol.duplicate_key");
 });
+
+
+test("tail-anchored appended-turn detection ignores virtualized older history", () => {
+  const snapshot = {
+    turns: [
+      { role: "user", identity_key: "old-late-render", order: 0 },
+      { role: "assistant", identity_key: "baseline-tail", order: 1 },
+      { role: "user", identity_key: "new-user", order: 2 },
+      { role: "assistant", identity_key: "new-assistant", order: 3 }
+    ]
+  };
+  assert.deepEqual(
+    Core.turnsAfterAnchor(snapshot, "baseline-tail", "user").map((turn) => turn.identity_key),
+    ["new-user"]
+  );
+  assert.deepEqual(Core.turnsAfterAnchor(snapshot, "missing-tail", "user"), []);
+});
