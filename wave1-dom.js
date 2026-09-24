@@ -62,12 +62,17 @@
   }
 
   function classifyError(adapter, documentLike = document) {
+    const turnNodes = Array.from(documentLike.querySelectorAll("[data-message-author-role='user'], [data-message-author-role='assistant']"));
+    const latestTurnRoot = messageRoot(turnNodes.at(-1));
     const explicit = Platforms.findErrorState(adapter, documentLike);
     const candidates = [];
     if (explicit) candidates.push(explicit);
     for (const element of documentLike.querySelectorAll("[role='alert'], [data-testid*='error' i], button")) candidates.push(element);
     for (const element of Array.from(new Set(candidates))) {
       if (Platforms.visible && !Platforms.visible(element)) continue;
+      const turnNode = element.closest?.("[data-message-author-role='user'], [data-message-author-role='assistant'], article[data-testid^='conversation-turn'], article");
+      const containingTurn = turnNode ? messageRoot(turnNode) : null;
+      if (containingTurn && containingTurn !== latestTurnRoot) continue;
       const text = Core.normalizeText(element?.innerText || element?.textContent || element?.getAttribute?.("aria-label") || "").toLowerCase();
       if (!text) continue;
       if (/\b(sign in|log in|login|authentication required)\b/i.test(text)) return "auth_required";
