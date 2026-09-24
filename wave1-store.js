@@ -560,6 +560,38 @@
     });
   }
 
+  async function markResponseFailed({ delivery_id, actor_id, fence, error_code, boot_id = "", evidence = {} }) {
+    return withTransaction(["deliveries", "leases", "tasks", "runs", "meta", "events"], "readwrite", async (tx) => {
+      const timestamp = now();
+      let delivery = await readDelivery(tx, delivery_id);
+      if (delivery.state === "RESPONSE_FAILED") return delivery;
+      if (!["DELIVERED", "RESPONSE_STARTED"].includes(delivery.state)) {
+        throw new Error(`Cannot mark response failed from ${delivery.state}`);
+      }
+      await assertFence(tx, delivery, actor_id, fence, { requireFresh: false, at: timestamp });
+      const previous = delivery.state;
+      delivery = transitionDelivery(delivery, "RESPONSE_FAILED", timestamp);
+      delivery.response_error = String(error_code || "generation_error").slice(0, 160);
+      store(tx, "deliveries").put(delivery);
+      const task = await requestPromise(store(tx, "tasks").get(delivery.task_id));
+      if (task) store(tx, "tasks").put({ ...task, status: "FAILED", updated_at: timestamp });
+      const run = await requestPromise(store(tx, "runs").get(delivery.run_id));
+      if (run) store(tx, "runs").put({ ...run, status: "FAILED", updated_at: timestamp });
+      await appendEvent(tx, {
+        delivery,
+        previous_state: previous,
+        next_state: "RESPONSE_FAILED",
+        event_type: "RESPONSE_FAILED",
+        reason: delivery.response_error,
+        actor_id,
+        boot_id,
+        lease_fence: fence,
+        evidence
+      });
+      return delivery;
+    });
+  }
+
   async function markResponseStarted({ delivery_id, actor_id, fence, candidate, text_hash, boot_id = "" }) {
     return transitionWithEvidence({
       delivery_id,
@@ -759,6 +791,7 @@
     markSentUnconfirmed,
     markDeliveryUnknown,
     markDelivered,
+    markResponseFailed,
     markResponseStarted,
     recordAssistantMutation,
     markResponseReceived,
