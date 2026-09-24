@@ -165,9 +165,17 @@
       || Number(permit.lease_fence) !== Number(expected?.lease_fence)) {
       return { ok: false, code: "send.permit_mismatch" };
     }
+    if (!Number.isFinite(Number(permit.lease_expires_at)) || Number(permit.lease_expires_at) <= Date.now()) {
+      return { ok: false, code: "send.lease_expired" };
+    }
     if (routeIdentity(locationLike) !== String(permit.provider_locator || "")) return { ok: false, code: "send.route_mismatch" };
     const exact = composerForExactPayload(expected?.payload, documentLike, locationLike);
     if (!exact.ok) return exact;
+    if (Platforms.isGenerating(exact.adapter, documentLike) || thinkingActive(documentLike)) {
+      return { ok: false, code: "send.ui_not_idle" };
+    }
+    const errorCode = classifyError(exact.adapter, documentLike);
+    if (errorCode) return { ok: false, code: `send.ui_error:${errorCode}` };
     const path = sendPath(exact.adapter, exact.composer, documentLike);
     if (!path) return { ok: false, code: "send.path_missing" };
     if (!Platforms.submitComposer(exact.adapter, exact.composer, documentLike)) {
