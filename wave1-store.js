@@ -654,6 +654,9 @@
       }
       if (delivery.state !== "RESPONSE_RECEIVED") throw new Error(`Cannot ACK worker result from ${delivery.state}`);
       await assertFence(tx, delivery, actor_id, fence, { requireFresh: false, at: timestamp });
+      if (!delivery.response_text || !delivery.response_text_hash) {
+        throw new Error("Cannot ACK before the completed assistant response is durably captured");
+      }
       const result = {
         delivery_id: delivery.delivery_id,
         run_id: delivery.run_id,
