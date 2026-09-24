@@ -40,7 +40,9 @@
 
   function turnDescriptor(element, order) {
     const role = String(element?.getAttribute?.("data-message-author-role") || "").toLowerCase();
-    const text = Core.normalizeText(element?.innerText || element?.textContent || "");
+    const text = String(element?.innerText || element?.textContent || "")
+      .replace(/\r\n?/g, "\n")
+      .trim();
     const root = messageRoot(element);
     const explicit = explicitMessageIdentity(element);
     const dom = nodeToken(root);
