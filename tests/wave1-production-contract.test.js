@@ -278,3 +278,25 @@ test('foreign user turn anywhere in the delivery window supersedes after exact r
   assert.match(region, /FOREIGN_USER_TURN_IN_DELIVERY_WINDOW/);
   assert.match(region, /Store\.markResponseSuperseded/);
 });
+
+
+test('Wave-1 suppresses reconciliation during the consume-to-Send critical section', () => {
+  const source = read('wave1-content.js');
+  assert.match(source, /let sendCriticalSection = false/);
+
+  const scheduleStart = source.indexOf('function scheduleReconcile');
+  const scheduleEnd = source.indexOf('async function reconcileNow', scheduleStart);
+  const schedule = source.slice(scheduleStart, scheduleEnd);
+  assert.match(schedule, /sendCriticalSection/);
+
+  const executeStart = source.indexOf('async function executeDelivery');
+  const executeEnd = source.indexOf('async function createAndRun', executeStart);
+  const execute = source.slice(executeStart, executeEnd);
+  const criticalOn = execute.indexOf('sendCriticalSection = true');
+  const consume = execute.indexOf('type: "WAVE1_CONSUME_SEND"');
+  const invoke = execute.indexOf('Dom.invokeAuthorizedSend');
+  const markSent = execute.indexOf('type: "WAVE1_MARK_SENT_UNCONFIRMED"');
+  const criticalOff = execute.lastIndexOf('sendCriticalSection = false');
+  assert.ok(criticalOn >= 0 && consume > criticalOn && invoke > consume && markSent > invoke && criticalOff > markSent);
+  assert.match(execute, /finally\s*\{[\s\S]*sendCriticalSection = false/);
+});
