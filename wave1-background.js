@@ -319,6 +319,7 @@
         actor_id: message.actor_id,
         fence: message.fence,
         envelope: parsed.envelope,
+        response_text: candidate.text,
         boot_id: BOOT_ID
       });
       return { ok: true, ...captured, terminal: true, task_terminal: true };
@@ -332,7 +333,7 @@
         delivery = await Store.annotateProtocolFailure({ delivery_id: delivery.delivery_id, actor_id: message.actor_id, fence: message.fence, code: parsed.code, boot_id: BOOT_ID });
         return { ok: true, delivery, terminal: true, task_terminal: false, protocol_error: parsed.code };
       }
-      const captured = await Store.captureDoneAndAck({ delivery_id: delivery.delivery_id, actor_id: message.actor_id, fence: message.fence, envelope: parsed.envelope, boot_id: BOOT_ID });
+      const captured = await Store.captureDoneAndAck({ delivery_id: delivery.delivery_id, actor_id: message.actor_id, fence: message.fence, envelope: parsed.envelope, response_text: candidate.text, boot_id: BOOT_ID });
       return { ok: true, ...captured, terminal: true, task_terminal: true };
     }
 
