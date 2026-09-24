@@ -54,10 +54,11 @@ test("owned user receipt requires exact route, non-baseline identity, marker, no
 
 test("assistant candidate is non-baseline and structurally follows exact receipt without using counts", () => {
   const baseline = { assistant_keys: ["msg:a0"] };
-  const receipt = { turn: { order: 4 } };
+  const receipt = { turn: { identity_key: "msg:u1", fingerprint: "fp:u1", order: 4 } };
   const snapshot = {
     turns: [
       { role: "assistant", identity_key: "msg:a0", identity_kind: "message_id", order: 2, text: "old" },
+      { role: "user", identity_key: "msg:u1", identity_kind: "message_id", fingerprint: "fp:u1", order: 4, text: "owned" },
       { role: "assistant", identity_key: "dom:a1", identity_kind: "dom", order: 5, text: "new response" },
       { role: "assistant", identity_key: "fp:a2", identity_kind: "fingerprint", order: 7, text: "later response" }
     ],
