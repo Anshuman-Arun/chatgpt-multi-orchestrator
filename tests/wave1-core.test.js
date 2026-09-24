@@ -148,3 +148,23 @@ test("tail-anchored appended-turn detection ignores virtualized older history", 
   );
   assert.deepEqual(Core.turnsAfterAnchor(snapshot, "missing-tail", "user"), []);
 });
+
+
+test("assistant causality re-anchors the owned user turn after DOM reorder", () => {
+  const baseline = { assistant_keys: ["old-assistant"] };
+  const receipt = { turn: { identity_key: "old-owned-user-node", fingerprint: "fp-owned", order: 99 } };
+  const snapshot = {
+    turns: [
+      { role: "user", identity_key: "new-owned-user-node", fingerprint: "fp-owned", order: 1, text: "owned" },
+      { role: "assistant", identity_key: "new-assistant", fingerprint: "fp-answer", order: 2, text: "answer" }
+    ]
+  };
+  assert.equal(Core.selectAssistantCandidate({ baseline, receipt, snapshot })?.identity_key, "new-assistant");
+
+  const noAnchor = { turns: [{ role: "assistant", identity_key: "new-assistant", order: 2, text: "answer" }] };
+  assert.equal(Core.selectAssistantCandidate({ baseline, receipt, snapshot: noAnchor }), null);
+  assert.equal(
+    Core.selectAssistantCandidate({ baseline, receipt, snapshot: noAnchor, currentIdentity: "new-assistant" })?.identity_key,
+    "new-assistant"
+  );
+});
