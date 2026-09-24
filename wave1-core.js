@@ -116,6 +116,16 @@
     return new Set(Array.isArray(values) ? values.map(String) : []);
   }
 
+  function turnsAfterAnchor(snapshot, anchorIdentity, role = "") {
+    const turns = Array.isArray(snapshot?.turns) ? snapshot.turns : [];
+    const anchor = turns.find((turn) => String(turn?.identity_key || "") === String(anchorIdentity || ""));
+    if (!anchor) return [];
+    return turns
+      .filter((turn) => Number(turn?.order) > Number(anchor.order))
+      .filter((turn) => !role || turn?.role === role)
+      .sort((a, b) => Number(a.order) - Number(b.order));
+  }
+
   async function findOwnedUserReceipt({ delivery, baseline, snapshot }) {
     if (!delivery || !snapshot) return { ok: false, code: "receipt.input_missing" };
     if (String(snapshot.route_identity || "") !== String(delivery.provider_locator || "")) {
@@ -323,6 +333,7 @@
     currentContext,
     buildRouterPayload,
     canTransition,
+    turnsAfterAnchor,
     findOwnedUserReceipt,
     selectAssistantCandidate,
     turnCompletionEvidence,
