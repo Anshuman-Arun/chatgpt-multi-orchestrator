@@ -621,7 +621,7 @@
       evidence: { response_text_hash, quiet_ms: completion_evidence?.quiet_ms || 0, generating: completion_evidence?.generating || false },
       mutate: (delivery, timestamp) => ({
         ...delivery,
-        response_text: String(delivery.response_text || ""),
+        response_text: String(response_text || ""),
         response_text_hash: String(response_text_hash || ""),
         response_received_at: timestamp
       })
@@ -676,7 +676,7 @@
         protocol_version: delivery.protocol_version,
         status: "DONE",
         envelope: { ...envelope },
-        response_text: String(response_text || ""),
+        response_text: String(delivery.response_text || ""),
         response_text_hash: delivery.response_text_hash || "",
         captured_at: timestamp
       };
