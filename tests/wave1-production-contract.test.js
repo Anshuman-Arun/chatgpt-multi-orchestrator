@@ -245,3 +245,23 @@ test('recognized post-delivery UI error becomes RESPONSE_FAILED atomically', () 
   assert.match(reconcile, /snapshot\.error_code/);
   assert.match(reconcile, /Store\.markResponseFailed/);
 });
+
+
+test('manual user turn after owned receipt supersedes response durably', () => {
+  const storeSource = read('wave1-store.js');
+  const backgroundSource = read('wave1-background.js');
+
+  const start = storeSource.indexOf('async function markResponseSuperseded');
+  const end = storeSource.indexOf('async function markResponseFailed', start);
+  assert.ok(start >= 0 && end > start);
+  const fn = storeSource.slice(start, end);
+  assert.match(fn, /RESPONSE_SUPERSEDED/);
+  assert.match(fn, /"tasks", "runs"/);
+  assert.match(fn, /status: "BLOCKED"/);
+
+  const reconcileStart = backgroundSource.indexOf('async function reconcile');
+  const reconcileEnd = backgroundSource.indexOf('async function handleJournal', reconcileStart);
+  const reconcile = backgroundSource.slice(reconcileStart, reconcileEnd);
+  assert.match(reconcile, /FOREIGN_USER_TURN_AFTER_OWNED_RECEIPT/);
+  assert.match(reconcile, /Store\.markResponseSuperseded/);
+});
