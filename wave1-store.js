@@ -374,8 +374,8 @@
   function sanitizeBaseline(baseline) {
     return {
       route_identity: String(baseline?.route_identity || ""),
-      user_keys: Array.isArray(baseline?.user_keys) ? baseline.user_keys.map(String).slice(-300) : [],
-      assistant_keys: Array.isArray(baseline?.assistant_keys) ? baseline.assistant_keys.map(String).slice(-300) : []
+      user_keys: Array.isArray(baseline?.user_keys) ? baseline.user_keys.map(String) : [],
+      assistant_keys: Array.isArray(baseline?.assistant_keys) ? baseline.assistant_keys.map(String) : []
     };
   }
 
