@@ -634,7 +634,7 @@
     });
   }
 
-  async function captureDoneAndAck({ delivery_id, actor_id, fence, envelope, boot_id = "" }) {
+  async function captureDoneAndAck({ delivery_id, actor_id, fence, envelope, response_text = "", boot_id = "" }) {
     return withTransaction(["deliveries", "leases", "worker_results", "tasks", "runs", "meta", "events"], "readwrite", async (tx) => {
       const timestamp = now();
       let delivery = await readDelivery(tx, delivery_id);
@@ -654,6 +654,7 @@
         protocol_version: delivery.protocol_version,
         status: "DONE",
         envelope: { ...envelope },
+        response_text: String(response_text || ""),
         response_text_hash: delivery.response_text_hash || "",
         captured_at: timestamp
       };
