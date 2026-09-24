@@ -247,6 +247,15 @@
   async function reconcile(message, sender) {
     let delivery = await Store.getDelivery(message.delivery_id);
     if (!delivery) throw new Error("Wave-1 Delivery was not found");
+    if (message.send_uncertain) {
+      return handleResolveSendUncertainty({
+        delivery_id: delivery.delivery_id,
+        actor_id: message.actor_id,
+        fence: message.fence,
+        reason: message.send_uncertain.reason || "SEND_BOUNDARY_ACK_UNCERTAIN",
+        evidence: message.send_uncertain.evidence || {}
+      });
+    }
     const snapshot = message.snapshot || {};
     const actualRoute = Config.pageId(snapshot.route_identity || senderLocator(sender));
 
