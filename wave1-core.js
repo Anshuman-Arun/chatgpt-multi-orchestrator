@@ -187,6 +187,74 @@
     "protocol_version", "run_id", "slot_id", "status", "task_id"
   ]);
 
+  function duplicateTopLevelJsonKey(jsonText) {
+    const text = String(jsonText || "");
+    let index = 0;
+    const seen = new Set();
+    const skipWhitespace = () => { while (/\s/.test(text[index] || "")) index += 1; };
+    const readString = () => {
+      if (text[index] !== '"') return null;
+      const start = index;
+      index += 1;
+      let escaped = false;
+      while (index < text.length) {
+        const char = text[index++];
+        if (escaped) { escaped = false; continue; }
+        if (char === "\\") { escaped = true; continue; }
+        if (char === '"') {
+          try { return JSON.parse(text.slice(start, index)); } catch { return null; }
+        }
+      }
+      return null;
+    };
+    const skipValue = () => {
+      let objectDepth = 0;
+      let arrayDepth = 0;
+      let inString = false;
+      let escaped = false;
+      while (index < text.length) {
+        const char = text[index];
+        if (inString) {
+          index += 1;
+          if (escaped) escaped = false;
+          else if (char === "\\") escaped = true;
+          else if (char === '"') inString = false;
+          continue;
+        }
+        if (char === '"') { inString = true; index += 1; continue; }
+        if (char === "{") { objectDepth += 1; index += 1; continue; }
+        if (char === "[") { arrayDepth += 1; index += 1; continue; }
+        if (char === "}") {
+          if (objectDepth > 0) { objectDepth -= 1; index += 1; continue; }
+          if (arrayDepth === 0) return;
+        }
+        if (char === "]" && arrayDepth > 0) { arrayDepth -= 1; index += 1; continue; }
+        if (char === "," && objectDepth === 0 && arrayDepth === 0) return;
+        index += 1;
+      }
+    };
+
+    skipWhitespace();
+    if (text[index++] !== "{") return "";
+    while (index < text.length) {
+      skipWhitespace();
+      if (text[index] === "}") return "";
+      const key = readString();
+      if (key == null) return "";
+      if (seen.has(key)) return key;
+      seen.add(key);
+      skipWhitespace();
+      if (text[index++] !== ":") return "";
+      skipWhitespace();
+      skipValue();
+      skipWhitespace();
+      if (text[index] === ",") { index += 1; continue; }
+      if (text[index] === "}") return "";
+      return "";
+    }
+    return "";
+  }
+
   function parseWorkerTerminal(responseText, expectedInput) {
     const text = String(responseText || "").trim();
     const starts = text.split(WORKER_START).length - 1;
@@ -198,6 +266,7 @@
       return { ok: false, code: "protocol.not_terminal" };
     }
     const jsonText = text.slice(startIndex + WORKER_START.length, endIndex).trim();
+    if (duplicateTopLevelJsonKey(jsonText)) return { ok: false, code: "protocol.duplicate_key" };
     let envelope;
     try {
       envelope = JSON.parse(jsonText);
