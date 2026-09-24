@@ -66,3 +66,13 @@ test('authorized Send permit is lease-bounded and rechecks UI idleness at actuat
   assert.match(actuator, /Platforms\.isGenerating/);
   assert.match(actuator, /classifyError/);
 });
+
+
+test('conversation baseline preserves every currently rendered turn identity', () => {
+  const source = read('wave1-store.js');
+  const start = source.indexOf('function sanitizeBaseline');
+  const end = source.indexOf('function beginComposerFilling', start);
+  assert.ok(start >= 0 && end > start);
+  const baseline = source.slice(start, end);
+  assert.doesNotMatch(baseline, /slice\(-\d+\)/);
+});
