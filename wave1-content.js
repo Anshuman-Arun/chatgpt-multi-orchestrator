@@ -12,6 +12,7 @@
 
   const actorId = globalThis.crypto?.randomUUID ? `wave1_actor_${globalThis.crypto.randomUUID()}` : `wave1_actor_${Date.now().toString(36)}`;
   let active = null;
+  let sendCriticalSection = false;
   let reconcileTimer = null;
   let pollTimer = null;
   let panel = null;
@@ -136,7 +137,7 @@
   }
 
   function scheduleReconcile(delay = 150) {
-    if (!active || reconcileTimer) return;
+    if (!active || sendCriticalSection || reconcileTimer) return;
     reconcileTimer = setTimeout(() => {
       reconcileTimer = null;
       reconcileNow().catch((error) => setStatus(`Reconciliation error: ${error.message}`, "error"));
@@ -182,7 +183,9 @@
     const delivery = claim.delivery;
     const fence = claim.lease.fence;
     active = { delivery_id: delivery.delivery_id, fence };
-    setStatus(stateSummary(delivery, `lease fence: ${fence}`));
+    sendCriticalSection = true;
+    try {
+      setStatus(stateSummary(delivery, `lease fence: ${fence}`));
 
     let snapshot = Dom.snapshot();
     const begin = await runtimeSend({
@@ -282,9 +285,13 @@
     } else {
       setStatus(stateSummary(marked.delivery, `send path: ${invoked.send_path}`));
     }
+    sendCriticalSection = false;
     startPolling();
     scheduleReconcile(100);
     return true;
+    } finally {
+      sendCriticalSection = false;
+    }
   }
 
   async function createAndRun() {
