@@ -87,10 +87,24 @@
   }
 
   function thinkingActive(documentLike = document) {
+    const assistantNodes = Array.from(documentLike.querySelectorAll("[data-message-author-role='assistant']"));
+    const latestAssistantRoot = messageRoot(assistantNodes.at(-1));
     const candidates = documentLike.querySelectorAll(
       "[data-testid*='thinking' i], [data-testid*='reasoning' i], [aria-label*='thinking' i], [aria-label*='reasoning' i]"
     );
-    return Array.from(candidates).some((element) => Platforms.visible ? Platforms.visible(element) : true);
+    return Array.from(candidates).some((element) => {
+      if (Platforms.visible && !Platforms.visible(element)) return false;
+      if (element.closest?.("form")) return false;
+      const role = String(element.getAttribute?.("role") || "").toLowerCase();
+      const ariaLive = String(element.getAttribute?.("aria-live") || "").toLowerCase();
+      return Boolean(
+        latestAssistantRoot?.contains?.(element)
+        || role === "status"
+        || role === "progressbar"
+        || ariaLive === "polite"
+        || ariaLive === "assertive"
+      );
+    });
   }
 
   function snapshot(documentLike = document, locationLike = globalThis.location) {
