@@ -265,3 +265,16 @@ test('manual user turn after owned receipt supersedes response durably', () => {
   assert.match(reconcile, /FOREIGN_USER_TURN_AFTER_OWNED_RECEIPT/);
   assert.match(reconcile, /Store\.markResponseSuperseded/);
 });
+
+
+test('foreign user turn anywhere in the delivery window supersedes after exact receipt', () => {
+  const source = read('wave1-background.js');
+  const receiptStart = source.indexOf('const receipt = await Core.findOwnedUserReceipt');
+  const deliveredStart = source.indexOf('delivery = await Store.markDelivered', receiptStart);
+  const responseStart = source.indexOf('if (delivery.state === "DELIVERED")', deliveredStart);
+  assert.ok(receiptStart >= 0 && deliveredStart > receiptStart && responseStart > deliveredStart);
+  const region = source.slice(receiptStart, responseStart);
+  assert.match(region, /newUserTurns\(delivery, snapshot\)/);
+  assert.match(region, /FOREIGN_USER_TURN_IN_DELIVERY_WINDOW/);
+  assert.match(region, /Store\.markResponseSuperseded/);
+});
