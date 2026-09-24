@@ -224,3 +224,10 @@ test("canonical composer text preserves whitespace while normalizing line ending
   assert.notEqual(Core.canonicalText("a  b"), Core.canonicalText("a b"));
   assert.equal(Core.normalizeText("a  b"), Core.normalizeText("a b"));
 });
+
+
+test("response failures are legal only after delivery", () => {
+  assert.equal(Core.canTransition("DELIVERED", "RESPONSE_FAILED"), true);
+  assert.equal(Core.canTransition("RESPONSE_STARTED", "RESPONSE_FAILED"), true);
+  assert.equal(Core.canTransition("SENT_UNCONFIRMED", "RESPONSE_FAILED"), false);
+});
