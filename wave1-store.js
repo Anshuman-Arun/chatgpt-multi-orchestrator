@@ -410,7 +410,7 @@
   }
 
   async function failPreSend({ delivery_id, actor_id, fence, reason, boot_id = "", evidence = {} }) {
-    return withTransaction(["deliveries", "leases", "meta", "events"], "readwrite", async (tx) => {
+    return withTransaction(["deliveries", "leases", "tasks", "runs", "meta", "events"], "readwrite", async (tx) => {
       const timestamp = now();
       let delivery = await readDelivery(tx, delivery_id);
       if (!["PENDING", "CLAIMED", "COMPOSER_FILLING", "COMPOSER_FILLED"].includes(delivery.state)) {
@@ -421,6 +421,10 @@
       delivery = transitionDelivery(delivery, "FAILED", timestamp);
       delivery.failure_reason = String(reason || "PRE_SEND_FAILURE").slice(0, 240);
       store(tx, "deliveries").put(delivery);
+      const task = await requestPromise(store(tx, "tasks").get(delivery.task_id));
+      if (task) store(tx, "tasks").put({ ...task, status: "FAILED", updated_at: timestamp });
+      const run = await requestPromise(store(tx, "runs").get(delivery.run_id));
+      if (run) store(tx, "runs").put({ ...run, status: "FAILED", updated_at: timestamp });
       await appendEvent(tx, { delivery, previous_state: previous, next_state: "FAILED", reason: delivery.failure_reason, actor_id, boot_id, lease_fence: fence, evidence });
       return delivery;
     });
@@ -499,7 +503,7 @@
   }
 
   async function markDeliveryUnknown({ delivery_id, actor_id, fence, reason, boot_id = "", evidence = {} }) {
-    return withTransaction(["deliveries", "leases", "meta", "events"], "readwrite", async (tx) => {
+    return withTransaction(["deliveries", "leases", "tasks", "runs", "meta", "events"], "readwrite", async (tx) => {
       const timestamp = now();
       let delivery = await readDelivery(tx, delivery_id);
       if (!["SUBMITTING", "SENT_UNCONFIRMED"].includes(delivery.state)) return delivery;
@@ -508,6 +512,10 @@
       delivery = transitionDelivery(delivery, "DELIVERY_UNKNOWN", timestamp);
       delivery.unknown_reason = String(reason || "DELIVERY_RECEIPT_UNRESOLVED").slice(0, 240);
       store(tx, "deliveries").put(delivery);
+      const task = await requestPromise(store(tx, "tasks").get(delivery.task_id));
+      if (task) store(tx, "tasks").put({ ...task, status: "BLOCKED", updated_at: timestamp });
+      const run = await requestPromise(store(tx, "runs").get(delivery.run_id));
+      if (run) store(tx, "runs").put({ ...run, status: "BLOCKED", updated_at: timestamp });
       await appendEvent(tx, { delivery, previous_state: previous, next_state: "DELIVERY_UNKNOWN", reason: delivery.unknown_reason, actor_id, boot_id, lease_fence: fence, evidence });
       return delivery;
     });
