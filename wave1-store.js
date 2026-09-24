@@ -560,6 +560,38 @@
     });
   }
 
+  async function markResponseSuperseded({ delivery_id, actor_id, fence, reason = "FOREIGN_USER_TURN_AFTER_OWNED_RECEIPT", boot_id = "", evidence = {} }) {
+    return withTransaction(["deliveries", "leases", "tasks", "runs", "meta", "events"], "readwrite", async (tx) => {
+      const timestamp = now();
+      let delivery = await readDelivery(tx, delivery_id);
+      if (delivery.state === "RESPONSE_SUPERSEDED") return delivery;
+      if (!["DELIVERED", "RESPONSE_STARTED"].includes(delivery.state)) {
+        throw new Error(`Cannot supersede response from ${delivery.state}`);
+      }
+      await assertFence(tx, delivery, actor_id, fence, { requireFresh: false, at: timestamp });
+      const previous = delivery.state;
+      delivery = transitionDelivery(delivery, "RESPONSE_SUPERSEDED", timestamp);
+      delivery.superseded_reason = String(reason || "FOREIGN_USER_TURN_AFTER_OWNED_RECEIPT").slice(0, 180);
+      store(tx, "deliveries").put(delivery);
+      const task = await requestPromise(store(tx, "tasks").get(delivery.task_id));
+      if (task) store(tx, "tasks").put({ ...task, status: "BLOCKED", updated_at: timestamp });
+      const run = await requestPromise(store(tx, "runs").get(delivery.run_id));
+      if (run) store(tx, "runs").put({ ...run, status: "BLOCKED", updated_at: timestamp });
+      await appendEvent(tx, {
+        delivery,
+        previous_state: previous,
+        next_state: "RESPONSE_SUPERSEDED",
+        event_type: "RESPONSE_SUPERSEDED",
+        reason: delivery.superseded_reason,
+        actor_id,
+        boot_id,
+        lease_fence: fence,
+        evidence
+      });
+      return delivery;
+    });
+  }
+
   async function markResponseFailed({ delivery_id, actor_id, fence, error_code, boot_id = "", evidence = {} }) {
     return withTransaction(["deliveries", "leases", "tasks", "runs", "meta", "events"], "readwrite", async (tx) => {
       const timestamp = now();
@@ -791,6 +823,7 @@
     markSentUnconfirmed,
     markDeliveryUnknown,
     markDelivered,
+    markResponseSuperseded,
     markResponseFailed,
     markResponseStarted,
     recordAssistantMutation,
