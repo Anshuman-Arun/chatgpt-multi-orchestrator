@@ -225,3 +225,23 @@ test('composer readback uses exact canonical text and an exact payload hash', ()
   assert.match(filled, /payload_exact_hash/);
   assert.match(filled, /Core\.canonicalText/);
 });
+
+
+test('recognized post-delivery UI error becomes RESPONSE_FAILED atomically', () => {
+  const storeSource = read('wave1-store.js');
+  const backgroundSource = read('wave1-background.js');
+
+  const failedStart = storeSource.indexOf('async function markResponseFailed');
+  const failedEnd = storeSource.indexOf('async function markResponseStarted', failedStart);
+  assert.ok(failedStart >= 0 && failedEnd > failedStart);
+  const failed = storeSource.slice(failedStart, failedEnd);
+  assert.match(failed, /"tasks", "runs"/);
+  assert.match(failed, /"RESPONSE_FAILED"/);
+  assert.match(failed, /appendEvent/);
+
+  const reconcileStart = backgroundSource.indexOf('async function reconcile');
+  const reconcileEnd = backgroundSource.indexOf('async function handleJournal', reconcileStart);
+  const reconcile = backgroundSource.slice(reconcileStart, reconcileEnd);
+  assert.match(reconcile, /snapshot\.error_code/);
+  assert.match(reconcile, /Store\.markResponseFailed/);
+});
