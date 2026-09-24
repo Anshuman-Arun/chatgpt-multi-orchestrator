@@ -76,3 +76,18 @@ test('conversation baseline preserves every currently rendered turn identity', (
   const baseline = source.slice(start, end);
   assert.doesNotMatch(baseline, /slice\(-\d+\)/);
 });
+
+
+test('ACK persists the substantive assistant response in worker_results', () => {
+  const storeSource = read('wave1-store.js');
+  const backgroundSource = read('wave1-background.js');
+  const captureStart = storeSource.indexOf('async function captureDoneAndAck');
+  const captureEnd = storeSource.indexOf('async function getDelivery', captureStart);
+  assert.ok(captureStart >= 0 && captureEnd > captureStart);
+  const capture = storeSource.slice(captureStart, captureEnd);
+  assert.match(capture, /response_text:\s*String\(response_text\s*\|\|\s*""\)/);
+
+  const firstCall = backgroundSource.indexOf('Store.captureDoneAndAck');
+  assert.ok(firstCall >= 0);
+  assert.match(backgroundSource.slice(firstCall, firstCall + 700), /response_text:\s*candidate\.text/);
+});
