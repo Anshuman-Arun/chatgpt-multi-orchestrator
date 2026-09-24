@@ -265,7 +265,8 @@
       const candidate = Core.selectAssistantCandidate({
         baseline: delivery.baseline,
         receipt: { turn: delivery.user_receipt },
-        snapshot
+        snapshot,
+        ownedUserText: delivery.payload
       });
       if (!candidate) return { ok: true, delivery, terminal: false, waiting_for: "assistant_candidate" };
       const textHash = await Core.sha256Hex(Core.normalizeText(candidate.text));
@@ -287,6 +288,7 @@
           baseline: delivery.baseline,
           receipt: { turn: delivery.user_receipt },
           snapshot,
+          ownedUserText: delivery.payload,
           currentIdentity: delivery.assistant_candidate?.identity_key
         });
       }
