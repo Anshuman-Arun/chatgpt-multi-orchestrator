@@ -231,3 +231,20 @@ test("response failures are legal only after delivery", () => {
   assert.equal(Core.canTransition("RESPONSE_STARTED", "RESPONSE_FAILED"), true);
   assert.equal(Core.canTransition("SENT_UNCONFIRMED", "RESPONSE_FAILED"), false);
 });
+
+
+test("manual user intervention can supersede a delivered response", () => {
+  assert.equal(Core.canTransition("DELIVERED", "RESPONSE_SUPERSEDED"), true);
+  assert.equal(Core.canTransition("RESPONSE_STARTED", "RESPONSE_SUPERSEDED"), true);
+  const snapshot = {
+    turns: [
+      { role: "user", identity_key: "owned-new", fingerprint: "owned-fp", order: 1, text: "router payload" },
+      { role: "assistant", identity_key: "a1", order: 2, text: "partial" },
+      { role: "user", identity_key: "manual", order: 3, text: "human interruption" }
+    ]
+  };
+  assert.deepEqual(
+    Core.turnsAfterAnchor(snapshot, "owned-old", "user", "owned-fp", "router   payload").map((turn) => turn.identity_key),
+    ["manual"]
+  );
+});
