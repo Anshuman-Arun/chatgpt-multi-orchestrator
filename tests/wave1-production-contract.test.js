@@ -134,3 +134,15 @@ test('error classification ignores stale historical turn errors', () => {
   assert.match(classify, /containingTurn/);
   assert.match(classify, /if \(containingTurn && containingTurn !== latestTurnRoot\) continue/);
 });
+
+
+test('DOM turn snapshots preserve substantive whitespace while comparisons normalize separately', () => {
+  const source = read('wave1-dom.js');
+  const start = source.indexOf('function turnDescriptor');
+  const end = source.indexOf('function classifyError', start);
+  assert.ok(start >= 0 && end > start);
+  const descriptor = source.slice(start, end);
+  assert.match(descriptor, /replace\(\/\\r\\n\?\/g, "\\n"\)/);
+  assert.doesNotMatch(descriptor, /const text = Core\.normalizeText/);
+  assert.match(descriptor, /Core\.fingerprint\(text\)/);
+});
