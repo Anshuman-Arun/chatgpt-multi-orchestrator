@@ -84,6 +84,15 @@
     return "";
   }
 
+  function rawComposerText(composer) {
+    if (!composer) return "";
+    const tag = String(composer.tagName || "").toUpperCase();
+    const value = tag === "TEXTAREA" || tag === "INPUT"
+      ? composer.value
+      : (composer.innerText ?? composer.textContent ?? "");
+    return Core.canonicalText(value);
+  }
+
   function sendPath(adapter, composer, documentLike = document) {
     if (!adapter || !composer) return null;
     const button = Platforms.findSendButton(adapter, composer, documentLike);
@@ -131,7 +140,7 @@
     return {
       route_identity: routeIdentity(locationLike),
       composer_present: Boolean(composer),
-      composer_text: composer ? Platforms.composerText(composer) : "",
+      composer_text: rawComposerText(composer),
       generating: Boolean(Platforms.isGenerating(adapter, documentLike) || thinkingActive(documentLike)),
       error_code: classifyError(adapter, documentLike),
       idle_send_path: Boolean(composer && sendPath(adapter, composer, documentLike)),
@@ -159,8 +168,8 @@
     const adapter = Platforms.adapterForLocation(locationLike);
     const composer = Platforms.findComposer(adapter, documentLike);
     if (!composer) return { ok: false, code: "composer.missing", composer: null, adapter };
-    const actual = Core.normalizeText(Platforms.composerText(composer));
-    const expected = Core.normalizeText(expectedPayload);
+    const actual = rawComposerText(composer);
+    const expected = Core.canonicalText(expectedPayload);
     if (actual !== expected) return { ok: false, code: "composer.readback_mismatch", composer, adapter, actual };
     return { ok: true, composer, adapter, actual };
   }
@@ -170,7 +179,7 @@
     const adapter = Platforms.adapterForLocation(locationLike);
     const composer = Platforms.findComposer(adapter, documentLike);
     if (!composer) return { ok: false, code: "composer.missing" };
-    if (Core.normalizeText(Platforms.composerText(composer))) return { ok: false, code: "composer.busy" };
+    if (Core.normalizeText(rawComposerText(composer))) return { ok: false, code: "composer.busy" };
     Platforms.setComposerValue(composer, payload);
     return { ok: true };
   }
@@ -212,6 +221,7 @@
     currentCandidate,
     classifyError,
     thinkingActive,
+    rawComposerText,
     sendPath,
     writeComposerExact,
     composerForExactPayload,
