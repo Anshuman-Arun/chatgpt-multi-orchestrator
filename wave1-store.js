@@ -523,6 +523,7 @@
       delivery.user_receipt = {
         identity_key: String(receipt?.identity_key || ""),
         identity_kind: String(receipt?.identity_kind || ""),
+        fingerprint: String(receipt?.fingerprint || ""),
         order: Number(receipt?.order) || 0,
         text_hash: String(receipt?.text_hash || "")
       };
@@ -539,6 +540,7 @@
         evidence: {
           user_identity: delivery.user_receipt.identity_key,
           identity_kind: delivery.user_receipt.identity_kind,
+          user_fingerprint: delivery.user_receipt.fingerprint,
           text_hash: delivery.user_receipt.text_hash
         }
       });
