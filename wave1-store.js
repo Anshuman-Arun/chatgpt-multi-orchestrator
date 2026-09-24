@@ -375,7 +375,8 @@
     return {
       route_identity: String(baseline?.route_identity || ""),
       user_keys: Array.isArray(baseline?.user_keys) ? baseline.user_keys.map(String) : [],
-      assistant_keys: Array.isArray(baseline?.assistant_keys) ? baseline.assistant_keys.map(String) : []
+      assistant_keys: Array.isArray(baseline?.assistant_keys) ? baseline.assistant_keys.map(String) : [],
+      tail_key: String(baseline?.tail_key || "")
     };
   }
 
@@ -389,7 +390,8 @@
       evidence: {
         route_fingerprint: Core.fingerprint(baseline.route_identity),
         user_baseline_size: baseline.user_keys.length,
-        assistant_baseline_size: baseline.assistant_keys.length
+        assistant_baseline_size: baseline.assistant_keys.length,
+        tail_fingerprint: Core.fingerprint(baseline.tail_key)
       },
       mutate: (delivery) => ({ ...delivery, baseline })
     });
