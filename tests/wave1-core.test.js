@@ -148,6 +148,25 @@ test("tail-anchored appended-turn detection ignores virtualized older history", 
     ["new-user"]
   );
   assert.deepEqual(Core.turnsAfterAnchor(snapshot, "missing-tail", "user"), []);
+
+  const rerendered = {
+    turns: [
+      { role: "assistant", identity_key: "new-tail-node", fingerprint: "tail-fp", order: 1 },
+      { role: "user", identity_key: "new-user", order: 2 }
+    ]
+  };
+  assert.deepEqual(
+    Core.turnsAfterAnchor(rerendered, "old-tail-node", "user", "tail-fp").map((turn) => turn.identity_key),
+    ["new-user"]
+  );
+  const ambiguous = {
+    turns: [
+      { role: "assistant", identity_key: "a", fingerprint: "tail-fp", order: 0 },
+      { role: "assistant", identity_key: "b", fingerprint: "tail-fp", order: 1 },
+      { role: "user", identity_key: "new-user", order: 2 }
+    ]
+  };
+  assert.deepEqual(Core.turnsAfterAnchor(ambiguous, "old-tail-node", "user", "tail-fp"), []);
 });
 
 
