@@ -34,8 +34,12 @@
 
   function newUserTurns(delivery, snapshot) {
     const baseline = new Set(Array.isArray(delivery?.baseline?.user_keys) ? delivery.baseline.user_keys : []);
-    return Core.turnsAfterAnchor(snapshot, delivery?.baseline?.tail_key, "user")
-      .filter((turn) => !baseline.has(String(turn.identity_key || "")));
+    return Core.turnsAfterAnchor(
+      snapshot,
+      delivery?.baseline?.tail_key,
+      "user",
+      delivery?.baseline?.tail_fingerprint
+    ).filter((turn) => !baseline.has(String(turn.identity_key || "")));
   }
 
   function candidateByIdentity(snapshot, identityKey) {
@@ -94,11 +98,13 @@
     if (snapshot.generating) throw new Error("ChatGPT is already generating; Wave-1 send is blocked");
     if (snapshot.error_code) throw new Error(`ChatGPT UI is not send-safe (${snapshot.error_code})`);
     const turns = Array.isArray(snapshot.turns) ? snapshot.turns : [];
+    const tail = turns.at(-1) || null;
     const baseline = {
       route_identity: snapshot.route_identity,
       user_keys: turns.filter((turn) => turn.role === "user").map((turn) => turn.identity_key),
       assistant_keys: turns.filter((turn) => turn.role === "assistant").map((turn) => turn.identity_key),
-      tail_key: String(turns.at(-1)?.identity_key || "")
+      tail_key: String(tail?.identity_key || ""),
+      tail_fingerprint: String(tail?.fingerprint || "")
     };
     const next = await Store.beginComposerFilling({
       delivery_id: delivery.delivery_id,
