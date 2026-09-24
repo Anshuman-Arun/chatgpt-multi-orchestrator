@@ -110,3 +110,15 @@ test('RESPONSE_RECEIVED durably snapshots assistant text before terminal ACK', (
   assert.match(branch, /Core\.parseWorkerTerminal\(delivery\.response_text, delivery\)/);
   assert.doesNotMatch(branch, /if \(!candidate\)/);
 });
+
+
+test('thinking detection excludes persistent composer controls and requires active response scope', () => {
+  const source = read('wave1-dom.js');
+  const start = source.indexOf('function thinkingActive');
+  const end = source.indexOf('function snapshot', start);
+  assert.ok(start >= 0 && end > start);
+  const thinking = source.slice(start, end);
+  assert.match(thinking, /closest\?\.\("form"\)/);
+  assert.match(thinking, /latestAssistantRoot/);
+  assert.match(thinking, /role='status'|role === "status"/);
+});
