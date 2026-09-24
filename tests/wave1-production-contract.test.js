@@ -85,6 +85,7 @@ test('ACK persists the substantive assistant response in worker_results', () => 
   assert.ok(captureStart >= 0 && captureEnd > captureStart);
   const capture = storeSource.slice(captureStart, captureEnd);
   assert.match(capture, /response_text:\s*String\(delivery\.response_text\s*\|\|\s*""\)/);
+  assert.match(capture, /if \(!delivery\.response_text \|\| !delivery\.response_text_hash\)/);
   assert.doesNotMatch(capture, /response_text\s*=\s*""/);
 });
 
