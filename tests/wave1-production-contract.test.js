@@ -189,7 +189,7 @@ test('assistant identity replacement resets quiescence and updates durable candi
   assert.ok(mutationStart >= 0 && mutationEnd > mutationStart);
   const mutation = storeSource.slice(mutationStart, mutationEnd);
   assert.match(mutation, /identityChanged/);
-  assert.match(mutation, /assistant_candidate:/);
+  assert.match(mutation, /delivery\.assistant_candidate\s*=|assistant_candidate:/);
   assert.match(mutation, /assistant_last_changed_at = timestamp|assistant_last_changed_at:\s*timestamp/);
 
   const responseStart = backgroundSource.indexOf('if (delivery.state === "RESPONSE_STARTED")');
@@ -317,7 +317,12 @@ test('lost send-boundary acknowledgements resolve from authoritative durable sta
   const executeEnd = contentSource.indexOf('async function createAndRun', executeStart);
   const execute = contentSource.slice(executeStart, executeEnd);
   assert.match(execute, /resolveSendUncertainty/);
-  assert.doesNotMatch(execute, /SUBMITTING_AUTHORIZATION_ACK_UNKNOWN[\s\S]{0,700}Dom\.invokeAuthorizedSend/);
+  const authFailure = execute.indexOf('SUBMITTING_AUTHORIZATION_ACK_UNKNOWN');
+  const consume = execute.indexOf('type: "WAVE1_CONSUME_SEND"');
+  assert.ok(authFailure >= 0 && consume > authFailure);
+  const authFailureRegion = execute.slice(authFailure, consume);
+  assert.match(authFailureRegion, /return false/);
+  assert.doesNotMatch(authFailureRegion, /Dom\.invokeAuthorizedSend/);
 });
 
 
@@ -326,15 +331,17 @@ test('the sole ChatGPT Send actuator requires a durable Wave-1 capability', () =
   const contentSource = read('content.js');
   const domSource = read('wave1-dom.js');
 
-  const submitStart = platformsSource.indexOf('function submitComposer');
+  const validatorStart = platformsSource.indexOf('function validDurableSendAuthorization');
+  const submitStart = platformsSource.indexOf('function submitComposer', validatorStart);
   const submitEnd = platformsSource.indexOf('function approvalRisk', submitStart);
-  assert.ok(submitStart >= 0 && submitEnd > submitStart);
-  const submit = platformsSource.slice(submitStart, submitEnd);
-  assert.match(submit, /wave1-durable-submitting/);
-  assert.match(submit, /authorization_id/);
-  assert.match(submit, /lease_fence/);
-  assert.match(submit, /lease_expires_at/);
-  assert.match(submit, /\.click\(\)|requestSubmit\(\)/);
+  assert.ok(validatorStart >= 0 && submitStart > validatorStart && submitEnd > submitStart);
+  const guardedSend = platformsSource.slice(validatorStart, submitEnd);
+  assert.match(guardedSend, /wave1-durable-submitting/);
+  assert.match(guardedSend, /authorization_id/);
+  assert.match(guardedSend, /lease_fence/);
+  assert.match(guardedSend, /lease_expires_at/);
+  assert.match(guardedSend, /usedSendAuthorizations/);
+  assert.match(guardedSend, /\.click\(\)|requestSubmit\(\)/);
 
   assert.doesNotMatch(contentSource, /Platforms\.submitComposer\(/);
   assert.equal((domSource.match(/Platforms\.submitComposer\(/g) || []).length, 1);
