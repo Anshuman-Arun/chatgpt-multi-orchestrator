@@ -121,22 +121,36 @@ test("composer clearing or generation alone is not a delivery receipt", () => {
   assert.equal(Platforms.submissionObserved(adapter, { expectedText: "queued prompt", previousSnapshot: { count: 0, latestText: "" } }, documentLike), false);
 });
 
-test("submits only through a real send button or form", () => {
+test("submits only with a current durable Wave-1 capability through a real send button or form", () => {
   const adapter = Platforms.ADAPTERS.chatgpt;
+  const permit = {
+    kind: "wave1-durable-submitting",
+    delivery_id: "delivery_test",
+    authorization_id: "sendauth_test",
+    lease_fence: 1,
+    lease_expires_at: Date.now() + 60_000,
+    consumed_at: Date.now()
+  };
+
+  const unauthorized = submitFixture({ withButton: true, withFormSubmit: true });
+  assert.equal(Platforms.submitComposer(adapter, unauthorized.composer, unauthorized.documentLike), false);
+  assert.equal(unauthorized.clicks(), 0);
+  assert.equal(unauthorized.formSubmits(), 0);
+
   const buttonCase = submitFixture({ withButton: true, withFormSubmit: true });
-  assert.equal(Platforms.submitComposer(adapter, buttonCase.composer, buttonCase.documentLike), true);
+  assert.equal(Platforms.submitComposer(adapter, buttonCase.composer, buttonCase.documentLike, permit), true);
   assert.equal(buttonCase.clicks(), 1);
   assert.equal(buttonCase.formSubmits(), 0);
 
   const formCase = submitFixture({ withFormSubmit: true });
-  assert.equal(Platforms.submitComposer(adapter, formCase.composer, formCase.documentLike), true);
+  assert.equal(Platforms.submitComposer(adapter, formCase.composer, formCase.documentLike, permit), true);
   assert.equal(formCase.clicks(), 0);
   assert.equal(formCase.formSubmits(), 1);
 
-  const unavailable = submitFixture();
-  assert.equal(Platforms.submitComposer(adapter, unavailable.composer, unavailable.documentLike), false);
-  assert.equal(unavailable.clicks(), 0);
-  assert.equal(unavailable.formSubmits(), 0);
+  const expired = submitFixture({ withButton: true, withFormSubmit: true });
+  assert.equal(Platforms.submitComposer(adapter, expired.composer, expired.documentLike, { ...permit, lease_expires_at: Date.now() - 1 }), false);
+  assert.equal(expired.clicks(), 0);
+  assert.equal(expired.formSubmits(), 0);
 });
 
 test("reads the latest ChatGPT assistant response for workflow markers", () => {
