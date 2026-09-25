@@ -395,7 +395,8 @@
       user_keys: Array.isArray(baseline?.user_keys) ? baseline.user_keys.map(String) : [],
       assistant_keys: Array.isArray(baseline?.assistant_keys) ? baseline.assistant_keys.map(String) : [],
       tail_key: String(baseline?.tail_key || ""),
-      tail_fingerprint: String(baseline?.tail_fingerprint || "")
+      tail_fingerprint: String(baseline?.tail_fingerprint || ""),
+      tail_text: String(baseline?.tail_text || "")
     };
   }
 
@@ -411,7 +412,8 @@
         user_baseline_size: baseline.user_keys.length,
         assistant_baseline_size: baseline.assistant_keys.length,
         tail_identity_fingerprint: Core.fingerprint(baseline.tail_key),
-        tail_content_fingerprint: baseline.tail_fingerprint
+        tail_content_fingerprint: baseline.tail_fingerprint,
+        tail_text_fingerprint: Core.fingerprint(baseline.tail_text)
       },
       mutate: (delivery) => ({ ...delivery, baseline })
     });
