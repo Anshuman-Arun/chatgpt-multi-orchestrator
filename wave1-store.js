@@ -134,7 +134,7 @@
       boot_id: String(input.boot_id || "").slice(0, 220),
       evidence: compactEvidence(input.evidence)
     };
-    events.put(event);
+    events.add(event);
     return event;
   }
 
@@ -805,7 +805,11 @@
       const binding = await requestPromise(store(tx, "conversation_bindings").index("provider_locator").get(locator));
       if (!binding) return { binding: null, delivery: null, result: null };
       const deliveries = await requestPromise(store(tx, "deliveries").index("conversation_id").getAll(binding.conversation_id));
-      deliveries.sort((a, b) => Number(b.created_at) - Number(a.created_at));
+      deliveries.sort((a, b) => (
+        Number(b.conversation_seq) - Number(a.conversation_seq)
+        || Number(b.created_at) - Number(a.created_at)
+        || String(b.delivery_id || "").localeCompare(String(a.delivery_id || ""))
+      ));
       const delivery = deliveries[0] || null;
       const result = delivery ? await requestPromise(store(tx, "worker_results").get(delivery.delivery_id)) : null;
       return { binding, delivery, result };
