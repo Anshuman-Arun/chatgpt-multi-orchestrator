@@ -208,7 +208,7 @@
     if (errorCode) return { ok: false, code: `send.ui_error:${errorCode}` };
     const path = sendPath(exact.adapter, exact.composer, documentLike);
     if (!path) return { ok: false, code: "send.path_missing" };
-    if (!Platforms.submitComposer(exact.adapter, exact.composer, documentLike)) {
+    if (!Platforms.submitComposer(exact.adapter, exact.composer, documentLike, permit)) {
       return { ok: false, code: "send.invoke_failed" };
     }
     return { ok: true, send_path: path.kind };
