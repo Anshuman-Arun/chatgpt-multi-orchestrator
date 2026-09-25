@@ -201,6 +201,31 @@
     if (routeIdentity(locationLike) !== String(permit.provider_locator || "")) return { ok: false, code: "send.route_mismatch" };
     const exact = composerForExactPayload(expected?.payload, documentLike, locationLike);
     if (!exact.ok) return exact;
+
+    const liveSnapshot = snapshot(documentLike, locationLike);
+    const baseline = expected?.baseline || null;
+    const baselineCount = (baseline?.user_keys?.length || 0) + (baseline?.assistant_keys?.length || 0);
+    if (baselineCount > 0) {
+      const anchor = Core.resolveTurnAnchor(
+        liveSnapshot,
+        baseline?.tail_key,
+        baseline?.tail_fingerprint,
+        baseline?.tail_text
+      );
+      if (!anchor) return { ok: false, code: "send.baseline_anchor_missing" };
+      if (Core.turnsAfterAnchor(
+        liveSnapshot,
+        baseline?.tail_key,
+        "user",
+        baseline?.tail_fingerprint,
+        baseline?.tail_text
+      ).length) {
+        return { ok: false, code: "send.foreign_user_turn" };
+      }
+    } else if (liveSnapshot.turns.some((turn) => turn?.role === "user")) {
+      return { ok: false, code: "send.foreign_user_turn" };
+    }
+
     if (Platforms.isGenerating(exact.adapter, documentLike) || thinkingActive(documentLike)) {
       return { ok: false, code: "send.ui_not_idle" };
     }
