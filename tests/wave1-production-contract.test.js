@@ -408,3 +408,13 @@ test('authorized Send rechecks the baseline user-turn window immediately before 
   assert.ok(invoke >= 0);
   assert.match(contentSource.slice(invoke, invoke + 700), /baseline:\s*filled\.delivery\?\.baseline/);
 });
+
+
+test('fallback assistant DOM identity is content-bound against node recycling', () => {
+  const source = read('wave1-dom.js');
+  const start = source.indexOf('function turnDescriptor');
+  const end = source.indexOf('function classifyError', start);
+  assert.ok(start >= 0 && end > start);
+  const descriptor = source.slice(start, end);
+  assert.match(descriptor, /dom-assistant:\$\{dom\}:\$\{textFingerprint\}/);
+});
