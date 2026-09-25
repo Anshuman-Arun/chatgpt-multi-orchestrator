@@ -111,7 +111,8 @@
       user_keys: turns.filter((turn) => turn.role === "user").map((turn) => turn.identity_key),
       assistant_keys: turns.filter((turn) => turn.role === "assistant").map((turn) => turn.identity_key),
       tail_key: String(tail?.identity_key || ""),
-      tail_fingerprint: String(tail?.fingerprint || "")
+      tail_fingerprint: String(tail?.fingerprint || ""),
+      tail_text: String(tail?.text || "")
     };
     const next = await Store.beginComposerFilling({
       delivery_id: delivery.delivery_id,
@@ -133,6 +134,17 @@
     if (exactComposer !== Core.canonicalText(delivery.payload)) throw new Error("Wave-1 exact composer readback failed");
     const composerHash = await Core.sha256Hex(exactComposer);
     if (composerHash !== delivery.payload_exact_hash) throw new Error("Wave-1 exact composer SHA-256 does not match the durable payload");
+    const baselineCount = (delivery.baseline?.user_keys?.length || 0) + (delivery.baseline?.assistant_keys?.length || 0);
+    if (baselineCount > 0 && !Core.resolveTurnAnchor(
+      snapshot,
+      delivery.baseline?.tail_key,
+      delivery.baseline?.tail_fingerprint,
+      delivery.baseline?.tail_text
+    )) {
+      const error = new Error("Wave-1 baseline tail cannot be re-identified before Send authorization");
+      error.code = "wave1.baseline_anchor_missing";
+      throw error;
+    }
     if (newUserTurns(delivery, snapshot).length) throw new Error("A foreign user turn appeared before Wave-1 Send authorization");
     const next = await Store.markComposerFilled({
       delivery_id: delivery.delivery_id,
