@@ -152,3 +152,11 @@ test("fallback reinjection includes shared runtime before dependent content scri
   assert.ok(sharedIndex < contentIndex);
   assert.ok(sharedIndex < wave1Index);
 });
+
+
+test("tab health requires both legacy and Wave-1 content runtimes", () => {
+  assert.match(source, /YOLOTAB_HEALTH_CHECK/);
+  assert.match(source, /WAVE1_CONTENT_HEALTH/);
+  assert.match(source, /legacyHealth\?\.ok/);
+  assert.match(source, /wave1Health\?\.ok/);
+});
