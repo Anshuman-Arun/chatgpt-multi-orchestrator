@@ -49,12 +49,6 @@
     ).filter((turn) => !baseline.has(String(turn.identity_key || "")));
   }
 
-  function candidateByIdentity(snapshot, identityKey) {
-    return (Array.isArray(snapshot?.turns) ? snapshot.turns : []).find((turn) => (
-      turn?.role === "assistant" && String(turn.identity_key || "") === String(identityKey || "")
-    )) || null;
-  }
-
   async function bindingForSender(sender) {
     const locator = requireDurableLocator(senderLocator(sender));
     return { locator, binding: await Store.getBindingByLocator(locator) };
@@ -403,16 +397,14 @@
     }
 
     if (delivery.state === "RESPONSE_STARTED") {
-      let candidate = candidateByIdentity(snapshot, delivery.assistant_candidate?.identity_key);
-      if (!candidate) {
-        candidate = Core.selectAssistantCandidate({
-          baseline: delivery.baseline,
-          receipt: { turn: delivery.user_receipt },
-          snapshot,
-          ownedUserText: delivery.payload,
-          currentIdentity: delivery.assistant_candidate?.identity_key
-        });
-      }
+      const candidate = Core.selectAssistantCandidate({
+        baseline: delivery.baseline,
+        receipt: { turn: delivery.user_receipt },
+        snapshot,
+        ownedUserText: delivery.payload,
+        currentIdentity: delivery.assistant_candidate?.identity_key,
+        currentIdentityKind: delivery.assistant_candidate?.identity_kind
+      });
       if (!candidate) return { ok: true, delivery, terminal: false, waiting_for: "assistant_candidate" };
       const textHash = await Core.sha256Hex(Core.normalizeText(candidate.text));
       const identityChanged = String(candidate.identity_key || "") !== String(delivery.assistant_candidate?.identity_key || "");
