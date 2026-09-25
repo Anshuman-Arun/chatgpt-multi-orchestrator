@@ -248,3 +248,18 @@ test("manual user intervention can supersede a delivered response", () => {
     ["manual"]
   );
 });
+
+
+test("baseline anchor resolution is explicit and fails closed when identity/text/fingerprint are all unavailable", () => {
+  const rerendered = {
+    turns: [
+      { role: "assistant", identity_key: "new-tail", fingerprint: "new-fp", order: 4, text: "same tail text" },
+      { role: "user", identity_key: "later-user", order: 5, text: "later" }
+    ]
+  };
+  assert.equal(
+    Core.resolveTurnAnchor(rerendered, "old-tail", "old-fp", "same   tail text")?.identity_key,
+    "new-tail"
+  );
+  assert.equal(Core.resolveTurnAnchor(rerendered, "old-tail", "old-fp", "missing"), null);
+});
