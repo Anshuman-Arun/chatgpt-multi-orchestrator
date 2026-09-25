@@ -221,7 +221,26 @@
     composer.dispatchEvent(new view.InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
   }
 
-  function submitComposer(adapter, composer, documentLike = document) {
+  function validDurableSendAuthorization(authorization) {
+    return Boolean(
+      authorization
+      && authorization.kind === "wave1-durable-submitting"
+      && String(authorization.delivery_id || "")
+      && String(authorization.authorization_id || "")
+      && Number.isInteger(Number(authorization.lease_fence))
+      && Number(authorization.lease_fence) > 0
+      && Number.isFinite(Number(authorization.lease_expires_at))
+      && Number(authorization.lease_expires_at) > Date.now()
+      && Number(authorization.consumed_at) > 0
+    );
+  }
+
+  // Sole low-level ChatGPT Send actuator. All production callers must present
+  // the one-shot durable capability returned after SUBMITTING authorization
+  // is persisted and consumed under the current sender fence.
+  function submitComposer(adapter, composer, documentLike = document, authorization = null) {
+    if (!validDurableSendAuthorization(authorization)) return false;
+
     const sendButton = findSendButton(adapter, composer, documentLike);
     if (sendButton) {
       sendButton.click();
