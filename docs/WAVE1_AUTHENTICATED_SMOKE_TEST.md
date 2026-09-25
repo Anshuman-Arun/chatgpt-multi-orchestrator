@@ -21,17 +21,23 @@ This test is required for `QA-G1.9`. Mock/unit tests cannot certify it.
 
 ## Required live observations
 
-Record pass/fail for each item:
+Record pass/fail against the immutable Wave-1 gate exactly:
 
-- **G1.1** The bound route remains the exact intended Project conversation for the entire send/receipt cycle.
-- **G1.2** If the composer contains any non-whitespace draft before launch, Wave 1 stops without clearing, appending to, or sending it.
-- **G1.3** The inserted router payload appears exactly in the composer before Send. The payload includes the current `delivery_id` and ownership token.
-- **G1.4** Only one router-owned user turn appears. A click/requestSubmit is not treated as delivery confirmation by itself.
-- **G1.5** `DELIVERED` occurs only after that exact new user turn is observed in the intended conversation.
-- **G1.6** The assistant response selected by the controller is the new causal response after that owned user turn, not an older assistant turn.
-- **G1.7** The Delivery reaches `ACKED` only if the assistant ends with the current strict `DONE` block; `worker_results` contains the captured result.
-- **G1.8** The event journal reconstructs the transaction without console logs, with monotonic `seq`, state pairs, IDs, reasons, fence, and evidence fingerprints.
-- **G1.9** The complete authenticated Project smoke path above succeeds on the current ChatGPT UI.
+- **QA-G1.1 — bind:** The developer control binds the designated existing Project conversation, and the bound canonical route remains the intended conversation.
+- **QA-G1.2 — persist before Send:** Before the browser Send side effect, IndexedDB contains the current Delivery and journal history through durable `SUBMITTING` authorization / one-shot capability consumption. There must be no user turn before that durable record exists.
+- **QA-G1.3 — positive exact receipt:** Exactly one new router-owned user turn is positively confirmed in the intended conversation. It contains the current `delivery_id` and ownership token, and its normalized text/hash matches the durable payload. A click/requestSubmit alone is not confirmation.
+- **QA-G1.4 — new assistant turn:** The controller identifies a non-baseline assistant candidate causally after the exact owned user turn; it must not select an older assistant message merely because it is latest/visible.
+- **QA-G1.5 — multi-signal turn completion:** `RESPONSE_RECEIVED` occurs only after the owned receipt and assistant candidate exist, generation/thinking is inactive, no recognized error is visible, composer/send state is idle, and assistant output has been quiescent for about four seconds. A fixed duration or text stability alone must not complete the turn.
+- **QA-G1.6 — terminal envelope:** The assistant ends with exactly one schema-valid current `DONE` worker block using the current controller-owned IDs, conversation sequence, and protocol version; that exact block is extracted successfully.
+- **QA-G1.7 — durable result:** `worker_results` contains the substantive assistant response, terminal envelope, identities, and response hash, and the Delivery reaches `ACKED` only after that result is committed.
+- **QA-G1.8 — journal reconstruction:** The append-only event journal reconstructs the Delivery state path through `ACKED` with monotonic `seq`, state pairs, identities, reasons, fence, and compact evidence, without relying on console logs.
+- **QA-G1.9 — authenticated Project smoke:** The complete path above succeeds in the current authenticated ChatGPT Project UI.
+
+Additional invariant checks, not substitutes for the G1 items:
+
+- **QA-R009:** Put non-whitespace text in the composer before launch. Wave 1 must stop pre-send without clearing, appending to, or sending that draft.
+- **QA-D006:** After crossing `SUBMITTING`, make receipt ambiguous (for example, navigate away before confirmation). The controller must stop in explicit uncertainty rather than automatically resend.
+- **QA-C003–C005:** Omit/corrupt the terminal block. The assistant turn may reach `RESPONSE_RECEIVED`, but the task must not reach `ACKED`.
 
 ## IndexedDB diagnostics
 
