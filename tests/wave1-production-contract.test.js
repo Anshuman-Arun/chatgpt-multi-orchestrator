@@ -389,3 +389,17 @@ test('composer authorization requires a re-identifiable nonempty baseline tail',
   assert.match(filled, /Core\.resolveTurnAnchor/);
   assert.match(filled, /wave1\.baseline_anchor_missing/);
 });
+
+
+test('authorized Send rechecks the baseline user-turn window immediately before actuation', () => {
+  const source = read('wave1-dom.js');
+  const start = source.indexOf('function invokeAuthorizedSend');
+  const end = source.indexOf('return Object.freeze', start);
+  assert.ok(start >= 0 && end > start);
+  const actuator = source.slice(start, end);
+  assert.match(actuator, /expected\?\.baseline/);
+  assert.match(actuator, /Core\.resolveTurnAnchor/);
+  assert.match(actuator, /Core\.turnsAfterAnchor/);
+  assert.match(actuator, /send\.foreign_user_turn/);
+  assert.match(actuator, /send\.baseline_anchor_missing/);
+});
