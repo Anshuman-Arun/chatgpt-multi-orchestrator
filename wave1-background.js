@@ -338,6 +338,16 @@
     }
 
     if (["DELIVERED", "RESPONSE_STARTED"].includes(delivery.state)) {
+      const ownedUserAnchor = Core.resolveTurnAnchor(
+        snapshot,
+        delivery.user_receipt?.identity_key,
+        delivery.user_receipt?.fingerprint,
+        delivery.payload
+      );
+      if (!ownedUserAnchor) {
+        return { ok: true, delivery, terminal: false, waiting_for: "owned_user_anchor" };
+      }
+
       const foreignAfterOwned = Core.turnsAfterAnchor(
         snapshot,
         delivery.user_receipt?.identity_key,
