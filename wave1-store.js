@@ -339,7 +339,23 @@
       const timestamp = now();
       const delivery = await readDelivery(tx, delivery_id);
       const lease = await assertFence(tx, delivery, actor_id, fence, { requireFresh: false, at: timestamp });
-      if (Number(lease.expires_at) - timestamp > LEASE_RENEW_WINDOW_MS) return { delivery, lease, renewed: false };
+      const expired = Number(lease.expires_at) <= timestamp;
+      const reconciliationOnlyStates = new Set([
+        "SUBMITTING", "SENT_UNCONFIRMED", "DELIVERED", "RESPONSE_STARTED", "RESPONSE_RECEIVED"
+      ]);
+
+      if (expired) {
+        if (reconciliationOnlyStates.has(delivery.state)) {
+          return { delivery, lease, renewed: false, reconciliation_only: true };
+        }
+        const error = new Error("Wave-1 sender lease expired before the Send ambiguity boundary");
+        error.code = "wave1.lease_expired";
+        throw error;
+      }
+
+      if (Number(lease.expires_at) - timestamp > LEASE_RENEW_WINDOW_MS) {
+        return { delivery, lease, renewed: false, reconciliation_only: false };
+      }
       lease.expires_at = timestamp + LEASE_MS;
       lease.updated_at = timestamp;
       store(tx, "leases").put(lease);
@@ -354,7 +370,7 @@
         boot_id,
         evidence: { lease_expires_at: lease.expires_at }
       });
-      return { delivery, lease, renewed: true };
+      return { delivery, lease, renewed: true, reconciliation_only: false };
     });
   }
 
