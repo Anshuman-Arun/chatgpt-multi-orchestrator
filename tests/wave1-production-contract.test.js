@@ -355,3 +355,24 @@ test('expired pre-send leases cannot be resurrected under the same fence', () =>
   assert.match(renew, /reconciliation_only/);
   assert.match(renew, /wave1\.lease_expired/);
 });
+
+
+test('event journal uses add semantics so prior sequence entries cannot be overwritten', () => {
+  const source = read('wave1-store.js');
+  const start = source.indexOf('async function appendEvent');
+  const end = source.indexOf('function transitionDelivery', start);
+  assert.ok(start >= 0 && end > start);
+  const append = source.slice(start, end);
+  assert.match(append, /events\.add\(event\)/);
+  assert.doesNotMatch(append, /events\.put\(event\)/);
+});
+
+test('status chooses the highest conversation sequence deterministically', () => {
+  const source = read('wave1-store.js');
+  const start = source.indexOf('async function getStatusByLocator');
+  const end = source.indexOf('async function getEventsForDelivery', start);
+  assert.ok(start >= 0 && end > start);
+  const status = source.slice(start, end);
+  assert.match(status, /conversation_seq/);
+  assert.match(status, /created_at/);
+});
