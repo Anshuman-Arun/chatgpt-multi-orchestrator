@@ -154,7 +154,7 @@
   async function handleFailPreSend(message, sender) {
     const delivery = await Store.getDelivery(message.delivery_id);
     if (!delivery) throw new Error("Wave-1 Delivery was not found");
-    if (senderLocator(sender) === delivery.provider_locator) requireSenderRoute(sender, delivery.provider_locator);
+    requireSenderRoute(sender, delivery.provider_locator);
     const next = await Store.failPreSend({
       delivery_id: delivery.delivery_id,
       actor_id: message.actor_id,
