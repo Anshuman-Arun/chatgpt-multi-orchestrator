@@ -20,6 +20,17 @@
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type !== "WAVE1_CONTENT_HEALTH") return false;
+    sendResponse({
+      ok: true,
+      actor_id: actorId,
+      route_identity: Dom.routeIdentity(),
+      active_delivery_id: active?.delivery_id || ""
+    });
+    return false;
+  });
+
   function runtimeSend(message) {
     return new Promise((resolve) => {
       chrome.runtime.sendMessage(message, (response) => {
