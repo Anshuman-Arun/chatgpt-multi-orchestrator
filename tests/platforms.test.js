@@ -139,11 +139,13 @@ test("submits only with a current durable Wave-1 capability through a real send 
 
   const buttonCase = submitFixture({ withButton: true, withFormSubmit: true });
   assert.equal(Platforms.submitComposer(adapter, buttonCase.composer, buttonCase.documentLike, permit), true);
+  assert.equal(Platforms.submitComposer(adapter, buttonCase.composer, buttonCase.documentLike, permit), false);
   assert.equal(buttonCase.clicks(), 1);
   assert.equal(buttonCase.formSubmits(), 0);
 
   const formCase = submitFixture({ withFormSubmit: true });
-  assert.equal(Platforms.submitComposer(adapter, formCase.composer, formCase.documentLike, permit), true);
+  const formPermit = { ...permit, authorization_id: "sendauth_form" };
+  assert.equal(Platforms.submitComposer(adapter, formCase.composer, formCase.documentLike, formPermit), true);
   assert.equal(formCase.clicks(), 0);
   assert.equal(formCase.formSubmits(), 1);
 
