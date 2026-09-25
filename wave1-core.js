@@ -169,7 +169,14 @@
     return { ok: false, code: candidates.length ? "receipt.no_exact_owned_turn" : "receipt.no_new_user_turn" };
   }
 
-  function selectAssistantCandidate({ baseline, receipt, snapshot, currentIdentity = "", ownedUserText = "" }) {
+  function selectAssistantCandidate({
+    baseline,
+    receipt,
+    snapshot,
+    currentIdentity = "",
+    currentIdentityKind = "",
+    ownedUserText = ""
+  }) {
     if (!receipt?.turn || !snapshot) return null;
     const turns = Array.isArray(snapshot.turns) ? snapshot.turns : [];
     const baselineAssistant = baselineKeys(baseline, "assistant");
@@ -177,11 +184,6 @@
       .filter((turn) => turn?.role === "assistant")
       .filter((turn) => !baselineAssistant.has(String(turn.identity_key || "")))
       .sort((a, b) => Number(a.order) - Number(b.order));
-
-    if (currentIdentity) {
-      const current = assistants.find((turn) => String(turn.identity_key || "") === String(currentIdentity));
-      if (current) return current;
-    }
 
     const receiptIdentity = String(receipt.turn.identity_key || "");
     const receiptFingerprint = String(receipt.turn.fingerprint || "");
@@ -196,9 +198,23 @@
     const anchor = exactAnchor
       || (ownedTextMatches.length === 1 ? ownedTextMatches[0] : null)
       || (fingerprintMatches.length === 1 ? fingerprintMatches[0] : null);
-    if (!anchor) return null;
 
-    return assistants.find((turn) => Number(turn.order) > Number(anchor.order)) || null;
+    if (!anchor) {
+      if (currentIdentity && currentIdentityKind === "message_id") {
+        return assistants.find((turn) => (
+          turn?.identity_kind === "message_id"
+          && String(turn.identity_key || "") === String(currentIdentity)
+        )) || null;
+      }
+      return null;
+    }
+
+    const causal = assistants.filter((turn) => Number(turn.order) > Number(anchor.order));
+    if (currentIdentity) {
+      const current = causal.find((turn) => String(turn.identity_key || "") === String(currentIdentity));
+      if (current) return current;
+    }
+    return causal[0] || null;
   }
 
   function turnCompletionEvidence({ delivered = false, candidate = null, snapshot = {}, last_changed_at = 0, now = Date.now() } = {}) {
