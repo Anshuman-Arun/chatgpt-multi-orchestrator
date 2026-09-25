@@ -376,3 +376,16 @@ test('status chooses the highest conversation sequence deterministically', () =>
   assert.match(status, /conversation_seq/);
   assert.match(status, /created_at/);
 });
+
+
+test('composer authorization requires a re-identifiable nonempty baseline tail', () => {
+  const storeSource = read('wave1-store.js');
+  const backgroundSource = read('wave1-background.js');
+  assert.match(storeSource, /tail_text:\s*String\(baseline\?\.tail_text\s*\|\|\s*""\)/);
+  const start = backgroundSource.indexOf('async function handleComposerFilled');
+  const end = backgroundSource.indexOf('async function handleFailPreSend', start);
+  assert.ok(start >= 0 && end > start);
+  const filled = backgroundSource.slice(start, end);
+  assert.match(filled, /Core\.resolveTurnAnchor/);
+  assert.match(filled, /wave1\.baseline_anchor_missing/);
+});
