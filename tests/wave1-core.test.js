@@ -181,11 +181,31 @@ test("assistant causality re-anchors the owned user turn after DOM reorder", () 
   };
   assert.equal(Core.selectAssistantCandidate({ baseline, receipt, snapshot })?.identity_key, "new-assistant");
 
-  const noAnchor = { turns: [{ role: "assistant", identity_key: "new-assistant", order: 2, text: "answer" }] };
+  const noAnchor = { turns: [{ role: "assistant", identity_key: "dom:new-assistant", identity_kind: "dom", order: 2, text: "answer" }] };
   assert.equal(Core.selectAssistantCandidate({ baseline, receipt, snapshot: noAnchor }), null);
   assert.equal(
-    Core.selectAssistantCandidate({ baseline, receipt, snapshot: noAnchor, currentIdentity: "new-assistant" })?.identity_key,
-    "new-assistant"
+    Core.selectAssistantCandidate({
+      baseline,
+      receipt,
+      snapshot: noAnchor,
+      currentIdentity: "dom:new-assistant",
+      currentIdentityKind: "dom"
+    }),
+    null
+  );
+
+  const explicitNoAnchor = {
+    turns: [{ role: "assistant", identity_key: "msg:provider-stable", identity_kind: "message_id", order: 2, text: "answer" }]
+  };
+  assert.equal(
+    Core.selectAssistantCandidate({
+      baseline,
+      receipt,
+      snapshot: explicitNoAnchor,
+      currentIdentity: "msg:provider-stable",
+      currentIdentityKind: "message_id"
+    })?.identity_key,
+    "msg:provider-stable"
   );
 });
 
