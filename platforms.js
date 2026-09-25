@@ -221,6 +221,8 @@
     composer.dispatchEvent(new view.InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
   }
 
+  const usedSendAuthorizations = new Set();
+
   function validDurableSendAuthorization(authorization) {
     return Boolean(
       authorization
@@ -240,15 +242,19 @@
   // is persisted and consumed under the current sender fence.
   function submitComposer(adapter, composer, documentLike = document, authorization = null) {
     if (!validDurableSendAuthorization(authorization)) return false;
+    const authorizationId = String(authorization.authorization_id);
+    if (usedSendAuthorizations.has(authorizationId)) return false;
 
     const sendButton = findSendButton(adapter, composer, documentLike);
     if (sendButton) {
+      usedSendAuthorizations.add(authorizationId);
       sendButton.click();
       return true;
     }
 
     const form = composer.closest?.("form");
     if (typeof form?.requestSubmit === "function") {
+      usedSendAuthorizations.add(authorizationId);
       form.requestSubmit();
       return true;
     }
