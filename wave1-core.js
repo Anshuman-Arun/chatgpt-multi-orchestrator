@@ -119,7 +119,7 @@
     return new Set(Array.isArray(values) ? values.map(String) : []);
   }
 
-  function turnsAfterAnchor(snapshot, anchorIdentity, role = "", anchorFingerprint = "", anchorText = "") {
+  function resolveTurnAnchor(snapshot, anchorIdentity, anchorFingerprint = "", anchorText = "") {
     const turns = Array.isArray(snapshot?.turns) ? snapshot.turns : [];
     const exact = turns.find((turn) => String(turn?.identity_key || "") === String(anchorIdentity || ""));
     const normalizedAnchorText = normalizeText(anchorText);
@@ -129,9 +129,15 @@
     const fingerprintMatches = anchorFingerprint
       ? turns.filter((turn) => String(turn?.fingerprint || "") === String(anchorFingerprint))
       : [];
-    const anchor = exact
+    return exact
       || (textMatches.length === 1 ? textMatches[0] : null)
-      || (fingerprintMatches.length === 1 ? fingerprintMatches[0] : null);
+      || (fingerprintMatches.length === 1 ? fingerprintMatches[0] : null)
+      || null;
+  }
+
+  function turnsAfterAnchor(snapshot, anchorIdentity, role = "", anchorFingerprint = "", anchorText = "") {
+    const turns = Array.isArray(snapshot?.turns) ? snapshot.turns : [];
+    const anchor = resolveTurnAnchor(snapshot, anchorIdentity, anchorFingerprint, anchorText);
     if (!anchor) return [];
     return turns
       .filter((turn) => Number(turn?.order) > Number(anchor.order))
@@ -369,6 +375,7 @@
     currentContext,
     buildRouterPayload,
     canTransition,
+    resolveTurnAnchor,
     turnsAfterAnchor,
     findOwnedUserReceipt,
     selectAssistantCandidate,
