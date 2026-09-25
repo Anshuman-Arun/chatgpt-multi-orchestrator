@@ -324,3 +324,34 @@ test('lost send-boundary acknowledgements resolve from authoritative durable sta
   assert.match(execute, /resolveSendUncertainty/);
   assert.doesNotMatch(execute, /SUBMITTING_AUTHORIZATION_ACK_UNKNOWN[\s\S]{0,700}Dom\.invokeAuthorizedSend/);
 });
+
+
+test('the sole ChatGPT Send actuator requires a durable Wave-1 capability', () => {
+  const platformsSource = read('platforms.js');
+  const contentSource = read('content.js');
+  const domSource = read('wave1-dom.js');
+
+  const submitStart = platformsSource.indexOf('function submitComposer');
+  const submitEnd = platformsSource.indexOf('function approvalRisk', submitStart);
+  assert.ok(submitStart >= 0 && submitEnd > submitStart);
+  const submit = platformsSource.slice(submitStart, submitEnd);
+  assert.match(submit, /wave1-durable-submitting/);
+  assert.match(submit, /authorization_id/);
+  assert.match(submit, /lease_fence/);
+  assert.match(submit, /lease_expires_at/);
+  assert.match(submit, /\.click\(\)|requestSubmit\(\)/);
+
+  assert.doesNotMatch(contentSource, /Platforms\.submitComposer\(/);
+  assert.equal((domSource.match(/Platforms\.submitComposer\(/g) || []).length, 1);
+});
+
+test('expired pre-send leases cannot be resurrected under the same fence', () => {
+  const storeSource = read('wave1-store.js');
+  const start = storeSource.indexOf('async function renewLease');
+  const end = storeSource.indexOf('async function transitionWithEvidence', start);
+  assert.ok(start >= 0 && end > start);
+  const renew = storeSource.slice(start, end);
+  assert.match(renew, /SUBMITTING/);
+  assert.match(renew, /reconciliation_only/);
+  assert.match(renew, /wave1\.lease_expired/);
+});
