@@ -49,7 +49,9 @@
     const textFingerprint = Core.fingerprint(text);
     const identity = explicit || (dom
       ? {
-          identity_key: role === "user" ? `dom-user:${dom}:${textFingerprint}` : `dom:${dom}`,
+          identity_key: role === "user"
+            ? `dom-user:${dom}:${textFingerprint}`
+            : `dom-assistant:${dom}:${textFingerprint}`,
           identity_kind: "dom"
         }
       : { identity_key: `fp:${textFingerprint}:${order}`, identity_kind: "fingerprint" });
