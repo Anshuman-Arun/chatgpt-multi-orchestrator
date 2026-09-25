@@ -402,4 +402,9 @@ test('authorized Send rechecks the baseline user-turn window immediately before 
   assert.match(actuator, /Core\.turnsAfterAnchor/);
   assert.match(actuator, /send\.foreign_user_turn/);
   assert.match(actuator, /send\.baseline_anchor_missing/);
+
+  const contentSource = read('wave1-content.js');
+  const invoke = contentSource.indexOf('Dom.invokeAuthorizedSend');
+  assert.ok(invoke >= 0);
+  assert.match(contentSource.slice(invoke, invoke + 700), /baseline:\s*filled\.delivery\?\.baseline/);
 });
