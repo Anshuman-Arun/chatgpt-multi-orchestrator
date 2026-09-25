@@ -436,3 +436,16 @@ test('pre-send failure is authorized only from the bound conversation route', ()
   assert.match(handler, /requireSenderRoute\(sender, delivery\.provider_locator\)/);
   assert.doesNotMatch(handler, /if \(senderLocator\(sender\) === delivery\.provider_locator\)/);
 });
+
+
+test('response progress pauses when the exact owned user turn cannot be re-identified', () => {
+  const source = read('wave1-background.js');
+  const reconcileStart = source.indexOf('async function reconcile');
+  const responseStart = source.indexOf('if (["DELIVERED", "RESPONSE_STARTED"].includes(delivery.state))', reconcileStart);
+  assert.ok(responseStart >= 0);
+  const region = source.slice(responseStart, responseStart + 1700);
+  assert.match(region, /Core\.resolveTurnAnchor/);
+  assert.match(region, /owned_user_anchor/);
+  assert.match(region, /delivery\.user_receipt\?\.fingerprint/);
+  assert.match(region, /delivery\.payload/);
+});
