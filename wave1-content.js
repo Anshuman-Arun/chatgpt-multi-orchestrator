@@ -287,7 +287,8 @@
       delivery_id: delivery.delivery_id,
       authorization_id: authorized.authorization_id,
       lease_fence: fence,
-      payload: delivery.payload
+      payload: delivery.payload,
+      baseline: filled.delivery?.baseline || null
     });
     if (!invoked.ok) {
       await resolveSendUncertainty(delivery.delivery_id, fence, invoked.code || "SEND_ACTUATOR_FAILED");
