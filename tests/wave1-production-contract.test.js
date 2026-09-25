@@ -418,3 +418,15 @@ test('fallback assistant DOM identity is content-bound against node recycling', 
   const descriptor = source.slice(start, end);
   assert.match(descriptor, /dom-assistant:\$\{dom\}:\$\{textFingerprint\}/);
 });
+
+
+test('response tracking cannot bypass causal assistant selection with a raw identity lookup', () => {
+  const source = read('wave1-background.js');
+  const start = source.indexOf('if (delivery.state === "RESPONSE_STARTED")');
+  const end = source.indexOf('if (delivery.state === "RESPONSE_RECEIVED")', start);
+  assert.ok(start >= 0 && end > start);
+  const branch = source.slice(start, end);
+  assert.doesNotMatch(branch, /candidateByIdentity\(/);
+  assert.match(branch, /Core\.selectAssistantCandidate/);
+  assert.match(branch, /currentIdentityKind:\s*delivery\.assistant_candidate\?\.identity_kind/);
+});
