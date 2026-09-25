@@ -425,3 +425,14 @@ test('response tracking cannot bypass causal assistant selection with a raw iden
   assert.match(branch, /Core\.selectAssistantCandidate/);
   assert.match(branch, /currentIdentityKind:\s*delivery\.assistant_candidate\?\.identity_kind/);
 });
+
+
+test('pre-send failure is authorized only from the bound conversation route', () => {
+  const source = read('wave1-background.js');
+  const start = source.indexOf('async function handleFailPreSend');
+  const end = source.indexOf('async function handleAuthorize', start);
+  assert.ok(start >= 0 && end > start);
+  const handler = source.slice(start, end);
+  assert.match(handler, /requireSenderRoute\(sender, delivery\.provider_locator\)/);
+  assert.doesNotMatch(handler, /if \(senderLocator\(sender\) === delivery\.provider_locator\)/);
+});
