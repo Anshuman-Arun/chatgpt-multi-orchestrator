@@ -30,6 +30,42 @@ Load `dist/yolo` as the single unpacked extension copy. Open one saved Project w
 
 For every scenario capture the Delivery IDs, conversation sequences, visible router-owned user-turn count, final state, and relevant journal event range. Any duplicate router-owned user turn is an immediate Wave-2 gate failure.
 
+## DevTools execution context and evidence capture
+
+Wave 2 runs as an extension content script in Chromium's isolated world. The developer helpers are **not** intentionally published into ChatGPT's normal page JavaScript context.
+
+In DevTools for the managed worker tab:
+
+1. open **Console**;
+2. use the JavaScript execution-context dropdown (normally showing `top`);
+3. select the unpacked MultiAgent extension/content-script context;
+4. verify:
+
+```js
+typeof MultiAgentWave2Dev
+```
+
+returns `"object"`.
+
+Do not expose these helpers to the page's main world just to simplify QA.
+
+After each scenario, capture one privacy-reduced evidence object:
+
+```js
+const wave2Evidence = await MultiAgentWave2Dev.exportEvidence();
+wave2Evidence
+```
+
+To copy it from DevTools:
+
+```js
+copy(JSON.stringify(wave2Evidence.evidence, null, 2))
+```
+
+The export is read-only. It includes durable Delivery/task/run state, lease/fence state, worker-result metadata, journal events, upstream events, fired faults, and a sanitized live DOM summary. It deliberately omits router payload text and assistant response text. It still contains conversation/Delivery identifiers and locators, so do not publish raw evidence from a private conversation without reviewing it.
+
+`live.currently_visible_delivery_turn_counts` compares currently materialized user turns against each Delivery's exact payload hash. A count greater than 1 is an immediate duplicate-send failure. Because ChatGPT can virtualize older turns, a visible count of 0 for a Delivery that crossed Send is **not** by itself proof that no turn exists; load/scroll the relevant history and reconcile it with durable receipt/journal evidence before concluding.
+
 ## Developer fault control
 
 From the page console in the managed worker tab:
@@ -258,5 +294,7 @@ Verify:
 ## Pass criteria
 
 The authenticated campaign passes only when all ten scenarios above satisfy the stated assertions and there are zero duplicate router-owned user turns.
+
+For each scenario, retain the exported evidence object plus any screenshot/manual note needed to resolve DOM virtualization or visually confirm the exact user-turn count. The durable evidence must be sufficient to reconstruct the state transitions without relying on transient console logs.
 
 A written guide, mock DOM test, or automated harness does **not** certify this live gate.
