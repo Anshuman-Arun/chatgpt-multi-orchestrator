@@ -9,7 +9,7 @@
   if (!Core) throw new Error("MultiAgentWave1Core is required");
 
   const DB_NAME = "chatgpt_multi_orchestrator_wave1";
-  const DB_VERSION = 1;
+  const DB_VERSION = 2;
   const LEASE_MS = 2 * 60 * 1000;
   const LEASE_RENEW_WINDOW_MS = 30 * 1000;
   const STORE_NAMES = Object.freeze([
@@ -68,6 +68,16 @@
         if (events) {
           events.createIndex("delivery_id", "delivery_id", { unique: false });
           events.createIndex("conversation_id", "conversation_id", { unique: false });
+        }
+        const upstream = ensureStore(db, "upstream_events", { keyPath: "event_id" });
+        if (upstream) {
+          upstream.createIndex("task_id", "task_id", { unique: false });
+          upstream.createIndex("dedupe_key", "dedupe_key", { unique: true });
+        }
+        const faults = ensureStore(db, "faults", { keyPath: "fault_id" });
+        if (faults) {
+          faults.createIndex("delivery_id", "delivery_id", { unique: false });
+          faults.createIndex("point", "point", { unique: false });
         }
       };
       request.onsuccess = () => resolve(request.result);
