@@ -44,23 +44,6 @@ function fakeMp4WithMdatBeforeMoov() {
   return Buffer.concat([ftyp, mdat, moov]);
 }
 
-function writeFfprobe(dir, out) {
-  const bin = path.join(dir, "ffprobe");
-  fs.writeFileSync(bin, `#!/bin/sh\necho '${JSON.stringify(out)}'\n`);
-  fs.chmodSync(bin, 0o755);
-  return bin;
-}
-
-function withFakeFfprobe(binDir, fn) {
-  const oldPath = process.env.PATH;
-  process.env.PATH = `${binDir}:${oldPath}`;
-  try {
-    return fn();
-  } finally {
-    process.env.PATH = oldPath;
-  }
-}
-
 test("parseDimensions parses WxH strings", async () => {
   const { parseDimensions } = await import("../scripts/validate-asset-manifest.mjs");
   assert.deepEqual(parseDimensions("1920x1080"), { width: 1920, height: 1080 });
@@ -182,8 +165,6 @@ test("validateEntry validates a real PNG and rejects dimension mismatch", async 
 test("validateEntry validates MP4 metadata via ffprobe", async () => {
   const { validateEntry } = await import("../scripts/validate-asset-manifest.mjs");
   const dir = tmpDir("mp4-");
-  const binDir = path.join(dir, "bin");
-  fs.mkdirSync(binDir, { recursive: true });
   const ffprobeOut = {
     streams: [
       {
@@ -197,7 +178,6 @@ test("validateEntry validates MP4 metadata via ffprobe", async () => {
     ],
     format: { duration: "44.5" },
   };
-  writeFfprobe(binDir, ffprobeOut);
 
   const file = path.join(dir, "test.mp4");
   fs.writeFileSync(file, fakeMp4WithMoovBeforeMdat());
@@ -218,17 +198,13 @@ test("validateEntry validates MP4 metadata via ffprobe", async () => {
     size_budget_mb: 35,
   };
 
-  const result = withFakeFfprobe(binDir, () =>
-    validateEntry(item, { rootDir: dir, seen: new Set() }),
-  );
+  const result = validateEntry(item, { rootDir: dir, seen: new Set(), probe: () => ffprobeOut });
   assert.deepEqual(result, []);
 });
 
 test("validateEntry rejects MP4 with audio, missing video stream, or bad fps", async () => {
   const { validateEntry } = await import("../scripts/validate-asset-manifest.mjs");
   const dir = tmpDir("mp4-");
-  const binDir = path.join(dir, "bin");
-  fs.mkdirSync(binDir, { recursive: true });
 
   const baseItem = {
     path: "test.mp4",
@@ -244,26 +220,26 @@ test("validateEntry rejects MP4 with audio, missing video stream, or bad fps", a
     size_budget_mb: 35,
   };
 
-  writeFfprobe(binDir, {
+  const noVideoMeta = {
     streams: [{ codec_type: "audio" }],
     format: { duration: "44.5" },
-  });
+  };
   const file = path.join(dir, "test.mp4");
   fs.writeFileSync(file, fakeMp4WithMoovBeforeMdat());
 
-  const noVideo = withFakeFfprobe(binDir, () =>
-    validateEntry({ ...baseItem, sha256: require("node:crypto").createHash("sha256").update(fs.readFileSync(file)).digest("hex") }, { rootDir: dir, seen: new Set() }),
+  const noVideo = validateEntry(
+    { ...baseItem, sha256: require("node:crypto").createHash("sha256").update(fs.readFileSync(file)).digest("hex") },
+    { rootDir: dir, seen: new Set(), probe: () => noVideoMeta },
   );
   assert.ok(noVideo.some((e) => e.includes("no video stream") || e.includes("unexpected audio stream")), noVideo.join("; "));
 
-  const badFpsBin = path.join(dir, "badfps-bin");
-  fs.mkdirSync(badFpsBin, { recursive: true });
-  writeFfprobe(badFpsBin, {
+  const badFpsMeta = {
     streams: [{ codec_type: "video", codec_name: "h264", pix_fmt: "yuv420p", width: 1920, height: 1080, r_frame_rate: "bad" }],
     format: { duration: "44.5" },
-  });
-  const badFps = withFakeFfprobe(badFpsBin, () =>
-    validateEntry({ ...baseItem, sha256: require("node:crypto").createHash("sha256").update(fs.readFileSync(file)).digest("hex") }, { rootDir: dir, seen: new Set() }),
+  };
+  const badFps = validateEntry(
+    { ...baseItem, sha256: require("node:crypto").createHash("sha256").update(fs.readFileSync(file)).digest("hex") },
+    { rootDir: dir, seen: new Set(), probe: () => badFpsMeta },
   );
   assert.ok(badFps.some((e) => e.includes("invalid frame rate")), badFps.join("; "));
 });

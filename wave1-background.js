@@ -95,7 +95,7 @@
     const snapshot = message.snapshot || {};
     if (snapshot.route_identity !== delivery.provider_locator) throw new Error("Wave-1 baseline route mismatch");
     if (!snapshot.composer_present) throw new Error("ChatGPT composer is unavailable");
-    if (Core.normalizeText(snapshot.composer_text)) throw new Error("Composer contains a draft; Wave-1 will not overwrite it");
+    if (Core.canonicalText(snapshot.composer_text)) throw new Error("Composer contains a draft; Wave-1 will not overwrite it");
     if (snapshot.generating) throw new Error("ChatGPT is already generating; Wave-1 send is blocked");
     if (snapshot.error_code) throw new Error(`ChatGPT UI is not send-safe (${snapshot.error_code})`);
     const turns = Array.isArray(snapshot.turns) ? snapshot.turns : [];

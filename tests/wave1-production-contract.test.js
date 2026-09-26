@@ -221,6 +221,25 @@ test('composer readback uses exact canonical text and an exact payload hash', ()
   assert.match(filled, /Core\.canonicalText/);
 });
 
+test('Wave-1 DOM actuator rejects replay of a consumed Send permit', () => {
+  const domSource = read('wave1-dom.js');
+  const actuator = domSource.slice(domSource.indexOf('function invokeAuthorizedSend'), domSource.indexOf('return Object.freeze', domSource.indexOf('function invokeAuthorizedSend')));
+  assert.match(domSource, /const usedSendAuthorizations = new Set\(\)/);
+  assert.match(actuator, /usedSendAuthorizations\.has\(permit\.authorization_id\)/);
+  assert.match(actuator, /usedSendAuthorizations\.add\(permit\.authorization_id\)/);
+  assert.ok(actuator.indexOf('usedSendAuthorizations.add') < actuator.indexOf('Platforms.submitComposer'));
+});
+
+test('any nonempty composer draft blocks Wave-1 before mutation', () => {
+  const domSource = read('wave1-dom.js');
+  const backgroundSource = read('wave1-background.js');
+  const write = domSource.slice(domSource.indexOf('function writeComposerExact'), domSource.indexOf('function invokeAuthorizedSend'));
+  const begin = backgroundSource.slice(backgroundSource.indexOf('async function handleBeginFill'), backgroundSource.indexOf('async function handleComposerFilled'));
+  assert.match(write, /rawComposerText\(composer\)\) return \{ ok: false, code: "composer\.busy"/);
+  assert.match(begin, /Core\.canonicalText\(snapshot\.composer_text\)\) throw new Error\("Composer contains a draft/);
+  assert.ok(write.indexOf('composer.busy') < write.indexOf('Platforms.setComposerValue'));
+});
+
 
 test('recognized post-delivery UI error becomes RESPONSE_FAILED atomically', () => {
   const storeSource = read('wave1-store.js');

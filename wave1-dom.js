@@ -7,6 +7,7 @@
 
   const nodeTokens = new WeakMap();
   let nextNodeToken = 1;
+  const usedSendAuthorizations = new Set();
 
   function requireRuntime() {
     if (!Config || !Platforms || !Core) throw new Error("Wave-1 DOM adapter dependencies are unavailable");
@@ -181,7 +182,7 @@
     const adapter = Platforms.adapterForLocation(locationLike);
     const composer = Platforms.findComposer(adapter, documentLike);
     if (!composer) return { ok: false, code: "composer.missing" };
-    if (Core.normalizeText(rawComposerText(composer))) return { ok: false, code: "composer.busy" };
+    if (rawComposerText(composer)) return { ok: false, code: "composer.busy" };
     Platforms.setComposerValue(composer, payload);
     return { ok: true };
   }
@@ -197,6 +198,9 @@
       || Number(permit.lease_fence) !== Number(expected?.lease_fence)) {
       return { ok: false, code: "send.permit_mismatch" };
     }
+    if (!permit.authorization_id) return { ok: false, code: "send.permit_missing" };
+    if (usedSendAuthorizations.has(permit.authorization_id)) return { ok: false, code: "send.permit_replayed" };
+    usedSendAuthorizations.add(permit.authorization_id);
     if (!Number.isFinite(Number(permit.lease_expires_at)) || Number(permit.lease_expires_at) <= Date.now()) {
       return { ok: false, code: "send.lease_expired" };
     }

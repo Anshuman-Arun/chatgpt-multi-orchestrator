@@ -78,9 +78,10 @@ test("primary controls and dynamic option statuses are accessibly named", () => 
 
 test("queue failures forward explicit delivery ambiguity", () => {
   const source = read("content.js");
-  assert.match(source, /deliveryAmbiguous: submissionAttempted/);
+  assert.match(source, /deliveryAmbiguous = Boolean\(submitted\.deliveryAmbiguous\)/);
   assert.match(source, /submitted\.code, deliveryAmbiguous/);
   assert.match(source, /"queue\.exception", deliveryAmbiguous/);
+  assert.match(source, /deliveryAmbiguous: false/);
 });
 
 test("ChatGPT content scripts include the composer-native command system", () => {
@@ -159,7 +160,8 @@ test("workflow prompt creation is atomic and responses must settle", () => {
 
 test("fallback injection restores the full command content-script stack", () => {
   const expected = '["config.js", "lifecycle.js", "platforms.js", "shared.js", "commands.js", "command-ui.js", "content-state.js", "content.js", "command-runtime.js"]';
-  assert.match(read("popup.js"), new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  const wave1 = expected.slice(0, -1) + ', "wave1-core.js", "wave1-dom.js", "wave1-content.js"]';
+  assert.match(read("popup.js"), new RegExp(wave1.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(read("options.js"), new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
 
