@@ -240,4 +240,22 @@
 
   async function createControllerEscalation({task_id,delivery_id="",reason="TOOL_FAILURE",detail="",boot_id=""}){return withTx(["tasks","deliveries","upstream_events","meta","events"],"readwrite",async tx=>{const at=now();const task=await req(os(tx,"tasks").get(task_id));if(task)os(tx,"tasks").put({...task,status:"ESCALATED",updated_at:at});const event_id=`controller:${task_id}:${reason}`;const existing=await req(os(tx,"upstream_events").get(event_id));if(!existing)os(tx,"upstream_events").put({event_id,origin:"CONTROLLER",task_id,delivery_id,status:"ESCALATE",reason,detail,created_at:at});let d=null;if(delivery_id)d=await req(os(tx,"deliveries").get(delivery_id));await appendEvent(tx,{delivery:d||{},task_id,delivery_id,event_type:"CONTROLLER_ESCALATION",reason,boot_id,evidence:{detail}});return existing||{event_id,reason,detail};});}
 
-  async function beginStartupReconciliation({conversation_id,actor_id,boot_id=""}){return withTx(["startup_barriers","meta","events"],"readwrite",async tx=>{const at=now();os(tx,"startup_barriers")
+  async function beginStartupReconciliation({conversation_id,actor_id,boot_id=""}){return withTx(["startup_barriers","meta","events"],"readwrite",async tx=>{const at=now();os(tx,"startup_barriers").put({conversation_id,reconciled:false,actor_id:String(actor_id||""),updated_at:at});await appendEvent(tx,{conversation_id,event_type:"STARTUP_RECONCILIATION_BEGIN",reason:"RESTART_OR_REBIND",actor_id,boot_id});return true;});}
+  async function completeStartupReconciliation({conversation_id,actor_id,boot_id=""}){return withTx(["startup_barriers","meta","events"],"readwrite",async tx=>{const at=now();os(tx,"startup_barriers").put({conversation_id,reconciled:true,actor_id:String(actor_id||""),updated_at:at});await appendEvent(tx,{conversation_id,event_type:"STARTUP_RECONCILIATION_COMPLETE",reason:"DURABLE_STATE_RECONCILED",actor_id,boot_id});return true;});}
+  async function getStartupBarrier(conversationId){return withTx(["startup_barriers"],"readonly",tx=>req(os(tx,"startup_barriers").get(String(conversationId||""))));}
+
+  async function configureFault({point,remaining=1,enabled=true}){if(!Core.FAULT_POINTS.includes(point))throw new Error("unknown fault point");return withTx(["faults"],"readwrite",async tx=>{const rec={point,enabled:Boolean(enabled),remaining:Math.max(0,Math.floor(Number(remaining)||0)),updated_at:now()};os(tx,"faults").put(rec);return rec;});}
+  async function maybeFireFault({point,delivery_id="",actor_id="",boot_id=""}){if(!Core.FAULT_POINTS.includes(point))return false;return withTx(["faults","deliveries","meta","events"],"readwrite",async tx=>{const rec=await req(os(tx,"faults").get(point));if(!rec?.enabled||Number(rec.remaining)<=0)return false;rec.remaining=Number(rec.remaining)-1;rec.updated_at=now();os(tx,"faults").put(rec);const d=delivery_id?await req(os(tx,"deliveries").get(delivery_id)):null;await appendEvent(tx,{delivery:d||{},delivery_id,event_type:"FAULT_INJECTED",reason:point,actor_id,boot_id,evidence:{remaining:rec.remaining}});return true;});}
+
+  async function getDelivery(id){return withTx(["deliveries"],"readonly",tx=>req(os(tx,"deliveries").get(String(id||""))));}
+  async function getBudget(taskId){return withTx(["task_budgets"],"readonly",tx=>req(os(tx,"task_budgets").get(String(taskId||""))));}
+  async function getEventsForDelivery(id){return withTx(["events"],"readonly",async tx=>(await req(os(tx,"events").index("delivery_id").getAll(String(id||"")))).sort((a,b)=>Number(a.seq)-Number(b.seq)));}
+  async function getUpstreamEvents(taskId){return withTx(["upstream_events"],"readonly",async tx=>taskId?req(os(tx,"upstream_events").index("task_id").getAll(String(taskId))):req(os(tx,"upstream_events").getAll()));}
+
+  return Object.freeze({
+    DB_NAME,DB_VERSION,LEASE_MS,STORE_NAMES,NEW_STORES,openDb,bindConversation,getBindingByLocator,listDeliveriesForConversation,listNonterminalDeliveries,latestForLocator,
+    createAssignment,createChildDelivery,acquireLease,renewLease,beginComposerFilling,markComposerFilled,failPreSend,authorizeSend,consumeSendAuthorization,markSentUnconfirmed,
+    markDeliveryUnknown,markDelivered,markResponseStarted,recordAssistantMutation,markResponseReceived,markResponseSuperseded,markResponseFailed,persistWorkerResult,ackWorkerResult,captureWorkerResult,materializePostResult,
+    ensureProtocolRepair,closeProtocolFailure,createControllerEscalation,beginStartupReconciliation,completeStartupReconciliation,getStartupBarrier,configureFault,maybeFireFault,getDelivery,getBudget,getEventsForDelivery,getUpstreamEvents
+  });
+});
