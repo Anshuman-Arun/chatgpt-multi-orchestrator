@@ -1,184 +1,89 @@
 (() => {
   "use strict";
-  if (globalThis.__MULTIAGENT_WAVE2_CONTENT__) return;
-  globalThis.__MULTIAGENT_WAVE2_CONTENT__ = true;
+  if(globalThis.__MULTIAGENT_WAVE2_CONTENT__)return;globalThis.__MULTIAGENT_WAVE2_CONTENT__=true;
+  const Config=globalThis.YOLOConfig, Core=globalThis.MultiAgentWave2Core, Dom=globalThis.MultiAgentWave2Dom;
+  if(!Config||!Core||!Dom||!globalThis.chrome?.runtime)return;
+  const actorId=globalThis.crypto?.randomUUID?`wave2_actor_${globalThis.crypto.randomUUID()}`:`wave2_actor_${Date.now().toString(36)}`;
+  let active=null,reconcileTimer=null,pollTimer=null,sendCritical=false,els=null;
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  function runtimeSend(message){return new Promise(resolve=>chrome.runtime.sendMessage(message,response=>resolve(chrome.runtime.lastError?{ok:false,code:"wave2.runtime_unavailable",reason:chrome.runtime.lastError.message}:response||{ok:false,code:"wave2.empty_response"})));}
+  const compact=r=>String(r?.reason||r?.code||"Wave-2 operation failed").slice(0,500);
+  function setStatus(text,level="info"){if(!els)return;els.status.textContent=String(text||"");els.status.dataset.level=level;}
+  function summary(d,extra=""){if(!d)return extra||"No Wave-2 Delivery.";return [`state: ${d.state}`,`kind: ${d.kind}`,`delivery: ${d.delivery_id}`,`task: ${d.task_id}`,`seq: ${d.conversation_seq}`,extra].filter(Boolean).join("\n");}
+  function stopPolling(){clearTimeout(reconcileTimer);reconcileTimer=null;clearInterval(pollTimer);pollTimer=null;}
+  function scheduleReconcile(delay=150){if(!active||sendCritical||reconcileTimer)return;reconcileTimer=setTimeout(()=>{reconcileTimer=null;reconcileNow().catch(e=>setStatus(`Reconcile error: ${e.message}`,"error"));},Math.max(0,Number(delay)||0));}
+  function startPolling(){clearInterval(pollTimer);pollTimer=setInterval(()=>active&&scheduleReconcile(0),750);}
+  async function faultPoint(point,deliveryId){const r=await runtimeSend({type:"WAVE2_FAULT_POINT",point,delivery_id:deliveryId||active?.delivery_id||"",actor_id:actorId});return r?.fault||null;}
+  function crashIfFault(fault){if(fault?.action==="CRASH"){active=null;stopPolling();const e=new Error(`Injected Wave-2 content crash at ${fault.point}`);e.code="wave2.injected_fault";throw e;}}
+  async function snapshotWithInjectedUi(){const snap=Dom.snapshot();const connection=await faultPoint("connection_interruption",active?.delivery_id);if(connection)snap.error_code="connection_waiting";const retry=await faultPoint("retry_error_state",active?.delivery_id);if(retry)snap.error_code="retryable_model_error";return snap;}
+  async function pauseManual(d,fence,reason,evidence={}){const r=await runtimeSend({type:"WAVE2_PAUSE_MANUAL",delivery_id:d.delivery_id,actor_id:actorId,fence,reason,evidence});active=null;stopPolling();setStatus(summary(r.delivery||d,"Automation paused; explicit reconciliation/resume is required."),"error");return r;}
+  async function failPreSend(d,fence,reason,evidence={}){const r=await runtimeSend({type:"WAVE2_FAIL_PRE_SEND",delivery_id:d.delivery_id,actor_id:actorId,fence,reason,evidence});active=null;stopPolling();setStatus(summary(r.delivery||d,`Stopped before Send: ${reason}`),"error");return r;}
 
-  const Config = globalThis.YOLOConfig;
-  const Shared = globalThis.YOLOShared;
-  const Core = globalThis.MultiAgentWave2Core;
-  const Dom = globalThis.MultiAgentWave2Dom;
-  if (!Config || !Shared || !Core || !Dom || !globalThis.chrome?.runtime) return;
-
-  const actorId = globalThis.crypto?.randomUUID ? `wave2_actor_${globalThis.crypto.randomUUID()}` : `wave2_actor_${Date.now().toString(36)}`;
-  let active = null;
-  let reconcileTimer = null;
-  let pollTimer = null;
-  let driveBusy = false;
-  let els = null;
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-  chrome.runtime.onMessage.addListener((message,_sender,sendResponse)=>{
-    if(message?.type!=="WAVE2_CONTENT_HEALTH")return false;
-    sendResponse({ok:true,actor_id:actorId,route_identity:Dom.routeIdentity(),active_delivery_id:active?.delivery_id||""});
-    return false;
-  });
-
-  function runtimeSend(message) {
-    return new Promise(resolve => chrome.runtime.sendMessage(message, response => {
-      if (chrome.runtime.lastError) resolve({ ok:false, code:"wave2.content_script_detached", reason:chrome.runtime.lastError.message });
-      else resolve(response || { ok:false, code:"wave2.empty_response", reason:"No controller response" });
-    }));
-  }
-  function compactError(r) { return String(r?.reason || r?.code || "Wave-2 operation failed").slice(0, 500); }
-  function setStatus(text, level="info") { if (!els) return; els.status.textContent=String(text||""); els.status.dataset.level=level; }
-  function summary(d, extra="") {
-    if (!d) return extra || "No Wave-2 Delivery.";
-    return [`state: ${d.state}`,`kind: ${d.kind}`,`delivery: ${d.delivery_id}`,`task: ${d.task_id}`,`seq: ${d.conversation_seq}`,extra].filter(Boolean).join("\n");
-  }
-  function stopPolling() { clearTimeout(reconcileTimer); reconcileTimer=null; clearInterval(pollTimer); pollTimer=null; }
-  function startPolling() { clearInterval(pollTimer); pollTimer=setInterval(()=>{ if(active) scheduleReconcile(0); },750); }
-  function scheduleReconcile(delay=150) {
-    if (!active || driveBusy || reconcileTimer) return;
-    reconcileTimer=setTimeout(()=>{ reconcileTimer=null; reconcileNow().catch(e=>setStatus(`Reconciliation error: ${e.message}`,"error")); },Math.max(0,Number(delay)||0));
-  }
-  async function fireFault(point, deliveryId) {
-    const r=await runtimeSend({type:"WAVE2_FIRE_FAULT",point,delivery_id:deliveryId,actor_id:actorId});
-    return Boolean(r?.ok && r.fired);
-  }
-
-  async function failPreSend(delivery, fence, reason, manualPause=false) {
-    const r=await runtimeSend({type:"WAVE2_FAIL_PRE_SEND",delivery_id:delivery.delivery_id,actor_id:actorId,fence,reason,manual_pause:manualPause});
-    if(r.ok){active=null;stopPolling();setStatus(summary(r.delivery,manualPause?"Paused for manual interference.":`Stopped pre-send: ${reason}`),"error");}
-    return r;
-  }
-
-  async function claim(delivery, force=false) {
-    const r=await runtimeSend({type:"WAVE2_CLAIM",delivery_id:delivery.delivery_id,actor_id:actorId,force_reclaim:force});
-    if(!r.ok) throw new Error(compactError(r));
-    active={delivery_id:r.delivery.delivery_id,fence:r.lease?.fence||r.delivery.lease_fence};
-    return r;
-  }
-
-  async function sendFromSubmitting(delivery, fence) {
-    const authorizationId=delivery.send_authorization_id;
-    if (!authorizationId || delivery.send_consumed_at) return false;
-    const consumed=await runtimeSend({type:"WAVE2_CONSUME_SEND",delivery_id:delivery.delivery_id,actor_id:actorId,fence,authorization_id:authorizationId});
-    if(!consumed.ok){setStatus(summary(delivery,`Send capability reconciliation paused: ${compactError(consumed)}`),"error");startPolling();return false;}
-    const invoked=Dom.invokeAuthorizedSend(consumed.permit,{delivery_id:delivery.delivery_id,authorization_id:authorizationId,lease_fence:fence,payload:delivery.payload,baseline:delivery.baseline||null});
-    if(!invoked.ok){setStatus(summary(delivery,`Authorized Send could not be actuated (${invoked.code}); no automatic resend.`),"error");startPolling();return false;}
-    if(await fireFault("after_send_invocation",delivery.delivery_id)){setStatus(summary(delivery,"Injected crash boundary after Send; recovery will reconcile without resend."),"error");startPolling();return false;}
-    const marked=await runtimeSend({type:"WAVE2_MARK_SENT",delivery_id:delivery.delivery_id,actor_id:actorId,fence,send_path:invoked.send_path});
-    if(!marked.ok)setStatus(summary(delivery,`Send happened but local acknowledgement was lost: ${compactError(marked)}. Reconciling only.`),"error");
-    else setStatus(summary(marked.delivery,`send path: ${invoked.send_path}`));
-    startPolling();scheduleReconcile(100);return true;
-  }
-
-  async function driveDelivery(initial, suppliedFence=0, resumeAction="") {
-    if(!initial || driveBusy)return false;
-    driveBusy=true;
-    try {
-      let delivery=initial, fence=Number(suppliedFence)||0;
-      if(!fence || delivery.state==="PENDING") { const c=await claim(delivery); delivery=c.delivery; fence=c.lease.fence; }
-      active={delivery_id:delivery.delivery_id,fence};
-
-      if(delivery.state==="CLAIMED") {
-        const snap=Dom.snapshot();
-        if(Core.canonicalText(snap.composer_text)) return (await failPreSend(delivery,fence,"FOREIGN_COMPOSER_BEFORE_SEND",true)).ok;
-        const begin=await runtimeSend({type:"WAVE2_BEGIN_FILL",delivery_id:delivery.delivery_id,actor_id:actorId,fence,snapshot:snap});
-        if(!begin.ok) return (await failPreSend(delivery,fence,begin.code||"BASELINE_REJECTED",begin.code==="wave2.manual_interference")).ok;
-        delivery=begin.delivery;
-      }
-
-      if(delivery.state==="COMPOSER_FILLING") {
-        const snap=Dom.snapshot(); const actual=Core.canonicalText(snap.composer_text), expected=Core.canonicalText(delivery.payload);
-        if(actual && actual!==expected) return (await failPreSend(delivery,fence,"FOREIGN_COMPOSER_DURING_RECOVERY",true)).ok;
-        if(!actual){const wrote=Dom.writeComposerExact(delivery.payload);if(!wrote.ok)return (await failPreSend(delivery,fence,wrote.code||"COMPOSER_WRITE_FAILED")).ok;await sleep(100);if(await fireFault("after_composer_write",delivery.delivery_id)){setStatus(summary(delivery,"Injected crash after composer write; startup recovery will inspect exact composer ownership."),"error");return false;}}
-        const filled=await runtimeSend({type:"WAVE2_COMPOSER_FILLED",delivery_id:delivery.delivery_id,actor_id:actorId,fence,snapshot:Dom.snapshot()});
-        if(!filled.ok)return (await failPreSend(delivery,fence,filled.code||"COMPOSER_READBACK_FAILED",filled.code==="wave2.manual_interference")).ok;
-        delivery=filled.delivery;
-      }
-
-      if(delivery.state==="COMPOSER_FILLED") {
-        const auth=await runtimeSend({type:"WAVE2_AUTHORIZE_SEND",delivery_id:delivery.delivery_id,actor_id:actorId,fence,snapshot:Dom.snapshot()});
-        if(!auth.ok){setStatus(summary(delivery,`Send authorization acknowledgement unavailable: ${compactError(auth)}. Reconstructing from durable state.`),"error");await startupReconcile();return false;}
-        delivery=auth.delivery;
-      }
-
-      if(delivery.state==="SUBMITTING") return sendFromSubmitting(delivery,fence);
-      if(["SENT_UNCONFIRMED","DELIVERED","RESPONSE_STARTED","RESPONSE_RECEIVED"].includes(delivery.state)){startPolling();scheduleReconcile(0);return true;}
-      if(Core.isTerminalState(delivery.state)){active=null;stopPolling();return true;}
-      if(resumeAction)setStatus(summary(delivery,`recovery action: ${resumeAction}`));
-      return true;
-    } finally { driveBusy=false; }
-  }
-
-  async function reconcileNow() {
-    if(!active)return;
-    const r=await runtimeSend({type:"WAVE2_RECONCILE",delivery_id:active.delivery_id,actor_id:actorId,fence:active.fence,snapshot:Dom.snapshot()});
-    if(!r.ok){setStatus(`Reconciliation paused: ${compactError(r)}`,"error");return;}
-    if(r.dropped){scheduleReconcile(500);return;}
-    if(r.next_delivery){
-      setStatus(summary(r.next_delivery,r.protocol_repair?"Protocol repair created without rerunning substantive work.":"Continuation created exactly once."));
-      active=null;stopPolling();await driveDelivery(r.next_delivery);return;
+  async function continuePreSend(delivery,fence){
+    let d=delivery,snap=Dom.snapshot();
+    if(d.state==="CLAIMED"){
+      if(Core.canonicalText(snap.composer_text))return pauseManual(d,fence,"MANUAL_COMPOSER_INTERFERENCE");
+      const b=await runtimeSend({type:"WAVE2_BEGIN_COMPOSER_FILL",delivery_id:d.delivery_id,actor_id:actorId,fence,snapshot:snap});
+      if(!b.ok)return failPreSend(d,fence,b.code||"BASELINE_REJECTED",{detail:Core.fingerprint(b.reason||"")});d=b.delivery;
     }
-    const d=r.delivery; setStatus(summary(d,r.waiting_for?`waiting for: ${r.waiting_for}`:r.controller_escalation?"Controller escalation persisted.":""),r.manual_pause||r.controller_escalation?"error":d?.state==="ACKED"?"success":"info");
-    if(r.resume_action==="RESUME_SEND_CAPABILITY"&&d?.state==="SUBMITTING"&&!d.send_consumed_at){await sendFromSubmitting(d,active.fence);return;}
-    if(r.terminal||Core.isTerminalState(d?.state)){active=null;stopPolling();return;}
+    if(d.state==="COMPOSER_FILLING"){
+      snap=Dom.snapshot();const current=Core.canonicalText(snap.composer_text),expected=Core.canonicalText(d.payload);
+      if(current&&current!==expected)return pauseManual(d,fence,"MANUAL_COMPOSER_INTERFERENCE");
+      if(!current){const wrote=Dom.writeComposerExact(d.payload);if(!wrote.ok)return pauseManual(d,fence,wrote.code||"COMPOSER_BUSY");await sleep(100);crashIfFault(await faultPoint("after_composer_write",d.delivery_id));}
+      snap=Dom.snapshot();const filled=await runtimeSend({type:"WAVE2_COMPOSER_FILLED",delivery_id:d.delivery_id,actor_id:actorId,fence,snapshot:snap});if(!filled.ok)return pauseManual(d,fence,filled.code||"COMPOSER_READBACK_FAILED",{detail:Core.fingerprint(filled.reason||"")});d=filled.delivery;
+    }
+    if(d.state==="COMPOSER_FILLED"){
+      const exact=Dom.composerForExactPayload(d.payload);if(!exact.ok)return pauseManual(d,fence,exact.code||"COMPOSER_CHANGED");
+      const auth=await runtimeSend({type:"WAVE2_AUTHORIZE_SEND",delivery_id:d.delivery_id,actor_id:actorId,fence});if(!auth.ok){active=null;stopPolling();setStatus(summary(d,`Send authorization unresolved: ${compact(auth)}. Recovery will reconcile without blind resend.`),"error");return false;}d=auth.delivery;
+    }
+    if(d.state==="SUBMITTING"){
+      if(d.send_consumed_at){sendCritical=false;startPolling();scheduleReconcile(0);return true;}
+      const exact=Dom.composerForExactPayload(d.payload);if(!exact.ok){active=null;stopPolling();setStatus(summary(d,"SUBMITTING but exact composer payload is unavailable; lane blocked for reconciliation."),"error");return false;}
+      const consumed=await runtimeSend({type:"WAVE2_CONSUME_SEND",delivery_id:d.delivery_id,actor_id:actorId,fence,authorization_id:d.send_authorization_id});if(!consumed.ok){active=null;stopPolling();setStatus(summary(d,`Send capability could not be consumed: ${compact(consumed)}. No Send was invoked.`),"error");return false;}
+      const invoked=Dom.invokeAuthorizedSend(consumed.permit,{delivery_id:d.delivery_id,authorization_id:d.send_authorization_id,lease_fence:fence,payload:d.payload,baseline:d.baseline||null});if(!invoked.ok){active=null;stopPolling();setStatus(summary(d,`Authorized Send actuator refused: ${invoked.code}. Reconciliation only.`),"error");return false;}
+      crashIfFault(await faultPoint("after_send_invocation",d.delivery_id));
+      const marked=await runtimeSend({type:"WAVE2_MARK_SENT_UNCONFIRMED",delivery_id:d.delivery_id,actor_id:actorId,fence,send_path:invoked.send_path});
+      if(!marked.ok)setStatus(summary(d,`Send occurred; local SENT_UNCONFIRMED commit was unavailable (${compact(marked)}). Never resending; reconciling.`),"error");else setStatus(summary(marked.delivery,`send path: ${invoked.send_path}`));
+    }
+    sendCritical=false;startPolling();scheduleReconcile(100);return true;
+  }
+
+  async function recoverDelivery(deliveryId){
+    if(active&&active.delivery_id!==deliveryId)return false;
+    const acquired=await runtimeSend({type:"WAVE2_ACQUIRE",delivery_id:deliveryId,actor_id:actorId});
+    if(!acquired.ok){if(acquired.code==="wave2.lease_handoff_deferred"){setStatus(`Recovery deferred until the prior consumed Send permit expires. No resend will occur.`,"info");return false;}setStatus(`Recovery blocked: ${compact(acquired)}`,"error");return false;}
+    let d=acquired.delivery;const fence=acquired.lease.fence;active={delivery_id:d.delivery_id,fence};setStatus(summary(d,`lease fence: ${fence}${acquired.reconciliation_only?" (reconciliation only)":""}`));
+    if(["CLAIMED","COMPOSER_FILLING","COMPOSER_FILLED"].includes(d.state)||(d.state==="SUBMITTING"&&!d.send_consumed_at)){sendCritical=true;try{return await continuePreSend(d,fence);}finally{sendCritical=false;}}
+    startPolling();scheduleReconcile(0);return true;
+  }
+
+  async function reconcileNow(){
+    if(!active)return;
+    const reloadFault=await faultPoint("tab_reload_during_generation",active.delivery_id);
+    if(reloadFault){setStatus("Injected Wave-2 tab reload; durable recovery will rebind before any new side effect.","error");globalThis.location?.reload?.();return;}
+    const snap=await snapshotWithInjectedUi();const r=await runtimeSend({type:"WAVE2_RECONCILE",delivery_id:active.delivery_id,actor_id:actorId,fence:active.fence,snapshot:snap});
+    if(!r.ok){setStatus(`Reconciliation paused: ${compact(r)}`,"error");return;}
+    const d=r.delivery;setStatus(summary(d,r.waiting_for?`waiting for: ${r.waiting_for}`:r.ui_state?`UI: ${r.ui_state}`:""),d?.state==="ACKED"?"success":"info");
+    if(r.next_delivery){active=null;stopPolling();await recoverDelivery(r.next_delivery.delivery_id);return;}
+    if(r.manual_pause||r.controller_escalation||r.task_terminal||["DELIVERY_UNKNOWN","FAILED","RESPONSE_FAILED","RESPONSE_SUPERSEDED"].includes(d?.state)){active=null;stopPolling();setStatus(summary(d,r.manual_pause?"Paused for manual reconciliation.":r.controller_escalation?"Controller escalation persisted.":r.task_terminal?"Task terminal.":"Lane stopped safely."),d?.state==="ACKED"?"success":"error");return;}
+    if(r.positive_non_delivery&&d?.state==="SUBMITTING"&&!d.send_consumed_at){sendCritical=true;try{await continuePreSend(d,active.fence);}finally{sendCritical=false;}return;}
     scheduleReconcile(500);
   }
 
-  async function startupReconcile() {
-    const route=Dom.routeIdentity(); if(!Config.isDurablePageId(route))return null;
-    const r=await runtimeSend({type:"WAVE2_STARTUP",actor_id:actorId,snapshot:Dom.snapshot()});
-    if(!r.ok){setStatus(`Startup reconciliation blocked: ${compactError(r)}`,"error");return r;}
-    if(!r.bound){setStatus("Not bound. Bind this saved conversation before Wave-2 work.");return r;}
-    if(!r.delivery){setStatus("Startup reconciliation complete; no nonterminal Delivery.","success");return r;}
-    if(r.next_delivery){await driveDelivery(r.next_delivery);return r;}
-    if(r.manual_pause||r.delivery.state==="DELIVERY_UNKNOWN"){active=null;stopPolling();setStatus(summary(r.delivery,"Startup reconciliation stopped safely; explicit human action required."),"error");return r;}
-    const fence=Number(r.fence)||Number(r.delivery.lease_fence)||0;active={delivery_id:r.delivery.delivery_id,fence};
-    if(["CLAIMED","COMPOSER_FILLING","COMPOSER_FILLED"].includes(r.delivery.state)||r.resume_action==="RESUME_SEND_CAPABILITY")await driveDelivery(r.delivery,fence,r.resume_action||"");
-    else {startPolling();scheduleReconcile(0);}
-    return r;
-  }
+  async function bind(){const route=Dom.routeIdentity();if(!Config.isDurablePageId(route)){setStatus("Open a saved ChatGPT conversation ending in /c/<id>.","error");return;}const r=await runtimeSend({type:"WAVE2_BIND",provider_locator:route,actor_id:actorId});setStatus(r.ok?`Bound ${r.binding.conversation_id}`:compact(r),r.ok?"success":"error");}
+  async function run(){if(active){setStatus("A Wave-2 Delivery is already active.","error");return;}const status=await runtimeSend({type:"WAVE2_STATUS"});if(!status.ok||!status.binding){setStatus("Bind this conversation first.","error");return;}if(status.binding.paused){setStatus(`Conversation paused: ${status.binding.pause_reason}. Reconcile and press Resume first.`,"error");return;}const instruction=String(els.instruction.value||"").trim();if(!instruction){setStatus("Enter a task instruction.","error");return;}const created=await runtimeSend({type:"WAVE2_CREATE_ASSIGNMENT",conversation_id:status.binding.conversation_id,instruction,budgets:{max_continuations:Number(els.continuations.value)||3,max_recoverable_failures:2,max_elapsed_ms:30*60*1000,max_protocol_repairs:1},actor_id:actorId});if(!created.ok){setStatus(compact(created),"error");return;}await recoverDelivery(created.delivery.delivery_id);}
+  async function resume(){const status=await runtimeSend({type:"WAVE2_STATUS"});if(!status?.binding||!status?.task){setStatus("No paused task to resume.","error");return;}const r=await runtimeSend({type:"WAVE2_RESUME_MANUAL",conversation_id:status.binding.conversation_id,task_id:status.task.task_id,actor_id:actorId});setStatus(r.ok?"Manual pause cleared after explicit reconciliation. No prior Delivery is resent automatically.":compact(r),r.ok?"success":"error");}
+  async function journal(){const status=await runtimeSend({type:"WAVE2_STATUS"});if(!status?.delivery){setStatus("No Delivery exists.","error");return;}const r=await runtimeSend({type:"WAVE2_JOURNAL",delivery_id:status.delivery.delivery_id});setStatus(r.ok?`journal events: ${r.events.length}\n${r.events.map(e=>`${e.seq} ${e.event_type} ${e.previous_state??""}->${e.next_state??""}`).join("\n")}`:compact(r),r.ok?"success":"error");}
+  async function recoverCurrent(){const status=await runtimeSend({type:"WAVE2_STATUS"});if(!status?.ok||!status.delivery)return;if(!Core.TERMINAL_DELIVERY_STATES.has(status.delivery.state))await recoverDelivery(status.delivery.delivery_id);}
+  globalThis.MultiAgentWave2Dev=Object.freeze({
+    armFaults:(points)=>runtimeSend({type:"WAVE2_CONFIGURE_FAULTS",enabled:true,points:Array.isArray(points)?points:[],actor_id:actorId}),
+    clearFaults:()=>runtimeSend({type:"WAVE2_CONFIGURE_FAULTS",enabled:false,points:[],actor_id:actorId})
+  });
 
-  async function bindCurrent() {
-    const route=Dom.routeIdentity(); if(!Config.isDurablePageId(route)){setStatus("Open a saved /c/... conversation.","error");return;}
-    const r=await runtimeSend({type:"WAVE2_BIND",provider_locator:route,actor_id:actorId}); if(!r.ok){setStatus(compactError(r),"error");return;}
-    setStatus(`Bound ${r.binding.conversation_id}. Reconciling durable state before enabling sends.`); await startupReconcile();
-  }
+  chrome.runtime.onMessage.addListener((m,_s,reply)=>{if(m?.type==="WAVE2_CONTENT_HEALTH"){reply({ok:true,actor_id:actorId,route_identity:Dom.routeIdentity(),active_delivery_id:active?.delivery_id||""});return false;}if(m?.type==="WAVE2_RECOVER_DELIVERY"){recoverDelivery(m.delivery_id).then(ok=>reply({ok,actor_id:actorId})).catch(e=>reply({ok:false,reason:e.message}));return true;}return false;});
 
-  async function createAndRun() {
-    if(active){setStatus("A managed Delivery is already active.","error");return;}
-    const status=await runtimeSend({type:"WAVE2_STATUS"}); if(!status.ok||!status.binding){setStatus("Bind this conversation first.","error");return;}
-    if(!status.barrier?.reconciled){await startupReconcile();const again=await runtimeSend({type:"WAVE2_STATUS"});if(!again.barrier?.reconciled)return;}
-    const instruction=String(els.instruction.value||"").trim(); if(!instruction){setStatus("Enter a task instruction.","error");return;}
-    const budgets={max_continuation_turns:Number(els.turns.value),max_recoverable_failures:Number(els.failures.value),max_elapsed_ms:Number(els.minutes.value)*60000,max_protocol_repairs:1};
-    const r=await runtimeSend({type:"WAVE2_CREATE_ASSIGNMENT",conversation_id:status.binding.conversation_id,instruction,budgets});
-    if(!r.ok){setStatus(`Assignment creation interrupted: ${compactError(r)}. Running reconstruction.`,"error");await startupReconcile();return;}
-    await driveDelivery(r.delivery);
-  }
-
-  async function armFault() {
-    const point=String(els.fault.value||"").trim(); const remaining=Math.max(1,Number(els.faultCount.value)||1);
-    const r=await runtimeSend({type:"WAVE2_CONFIGURE_FAULT",point,remaining,enabled:true});setStatus(r.ok?`Armed ${point} for ${remaining} trigger(s).`:compactError(r),r.ok?"success":"error");
-  }
-
-  async function showJournal() {
-    const status=await runtimeSend({type:"WAVE2_STATUS"}); if(!status.delivery){setStatus("No Delivery to inspect.","error");return;}
-    const r=await runtimeSend({type:"WAVE2_JOURNAL",delivery_id:status.delivery.delivery_id}); if(!r.ok){setStatus(compactError(r),"error");return;}
-    setStatus(`events: ${r.events.length}\n${r.events.map(e=>`${e.seq} ${e.event_type} ${e.previous_state||"-"}->${e.next_state||"-"} ${e.reason}`).join("\n")}`);
-  }
-
-  function installPanel() {
-    const host=document.createElement("div");host.id="multiagent-wave2-host";host.style.cssText="position:fixed;right:16px;bottom:16px;z-index:2147483647";
-    const shadow=host.attachShadow({mode:"open"});shadow.innerHTML=`<style>:host{all:initial}details{width:360px;font:12px/1.4 system-ui;color:#eee;background:#151515;border:1px solid #555;border-radius:10px}summary{padding:10px;font-weight:700;cursor:pointer}.body{padding:0 10px 10px;display:grid;gap:7px}textarea,input,select,button{font:inherit}textarea,input,select{box-sizing:border-box;width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:6px;padding:6px}textarea{min-height:80px}.row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px}.actions{display:flex;gap:5px;flex-wrap:wrap}button{background:#2c2c2c;color:#eee;border:1px solid #666;border-radius:6px;padding:6px 8px;cursor:pointer}pre{white-space:pre-wrap;overflow:auto;max-height:210px;background:#0d0d0d;padding:7px;border-radius:6px;margin:0}pre[data-level=error]{color:#ffaaaa}pre[data-level=success]{color:#aaffbb}.small{color:#aaa}</style><details><summary>MultiAgent · Wave 2</summary><div class="body"><div class="small">Reliable single-worker lane. Startup reconciliation runs before new sends.</div><textarea id="instruction">Work on this task autonomously. Use CONTINUE if another turn is needed; use DONE only when complete.</textarea><div class="row"><input id="turns" type="number" min="0" value="8" title="max continuation turns"><input id="failures" type="number" min="0" value="3" title="max recoverable failures"><input id="minutes" type="number" min="1" value="45" title="max minutes"></div><div class="actions"><button id="bind">Bind</button><button id="run">Run assignment</button><button id="reconcile">Reconcile</button><button id="journal">Journal</button></div><select id="fault">${Core.FAULT_POINTS.map(p=>`<option>${p}</option>`).join("")}</select><div class="row"><input id="faultCount" type="number" min="1" value="1"><button id="arm">Arm fault</button><span></span></div><pre id="status" role="status"></pre></div></details>`;
-    (document.body||document.documentElement).append(host);
-    const q=id=>shadow.getElementById(id);els={instruction:q("instruction"),turns:q("turns"),failures:q("failures"),minutes:q("minutes"),fault:q("fault"),faultCount:q("faultCount"),status:q("status")};
-    q("bind").onclick=()=>bindCurrent().catch(e=>setStatus(e.message,"error"));q("run").onclick=()=>createAndRun().catch(e=>setStatus(e.message,"error"));q("reconcile").onclick=()=>startupReconcile().catch(e=>setStatus(e.message,"error"));q("journal").onclick=()=>showJournal().catch(e=>setStatus(e.message,"error"));q("arm").onclick=()=>armFault().catch(e=>setStatus(e.message,"error"));
-  }
-
-  const observer=new MutationObserver(()=>{if(active)scheduleReconcile(150);});
-  function start(){if(!document.body&&!document.documentElement)return;document.getElementById("multiagent-wave1-host")?.remove();installPanel();observer.observe(document.body||document.documentElement,{childList:true,subtree:true,characterData:true});startupReconcile().catch(e=>setStatus(e.message,"error"));}
-  window.addEventListener("pagehide",()=>{stopPolling();observer.disconnect();});
-  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",start,{once:true});else start();
+  function installPanel(){const host=document.createElement("div");host.id="multiagent-wave2-host";host.style.cssText="position:fixed;right:16px;bottom:16px;z-index:2147483646";const sh=host.attachShadow({mode:"open"});sh.innerHTML=`<style>:host{all:initial}details{width:350px;font:12px/1.4 system-ui;color:#e8e8e8;background:#171717;border:1px solid #555;border-radius:10px}summary{padding:10px 12px;font-weight:700;cursor:pointer}.b{padding:0 12px 12px;display:grid;gap:8px}textarea,input{box-sizing:border-box;width:100%;background:#222;color:inherit;border:1px solid #555;border-radius:7px;padding:7px}textarea{min-height:80px}.a{display:flex;gap:6px;flex-wrap:wrap}button{background:#2d2d2d;color:inherit;border:1px solid #666;border-radius:7px;padding:6px 9px;cursor:pointer}pre{max-height:190px;overflow:auto;white-space:pre-wrap;background:#0f0f0f;padding:8px;border-radius:7px;margin:0}pre[data-level=error]{color:#ff9c9c}pre[data-level=success]{color:#9ee6ad}</style><details><summary>MultiAgent — Wave 2</summary><div class=b><textarea aria-label="Wave-2 task"></textarea><label>Max continuations <input type=number min=0 max=50 value=3></label><div class=a><button data-x=bind>Bind</button><button data-x=run>Run</button><button data-x=resume>Resume</button><button data-x=journal>Journal</button></div><pre role=status></pre></div></details>`;(document.body||document.documentElement).append(host);els={instruction:sh.querySelector("textarea"),continuations:sh.querySelector("input"),status:sh.querySelector("pre")};sh.querySelector('[data-x=bind]').onclick=()=>bind().catch(e=>setStatus(e.message,"error"));sh.querySelector('[data-x=run]').onclick=()=>run().catch(e=>setStatus(e.message,"error"));sh.querySelector('[data-x=resume]').onclick=()=>resume().catch(e=>setStatus(e.message,"error"));sh.querySelector('[data-x=journal]').onclick=()=>journal().catch(e=>setStatus(e.message,"error"));}
+  const observer=new MutationObserver(()=>{if(!active)return;faultPoint("drop_observer_callbacks",active.delivery_id).then(drop=>{if(drop)return;scheduleReconcile(150);return faultPoint("duplicate_observer_callbacks",active.delivery_id);}).then(dup=>{if(dup){scheduleReconcile(150);scheduleReconcile(150);}}).catch(()=>{});});
+  function start(){if(!document.body&&!document.documentElement)return;installPanel();observer.observe(document.body||document.documentElement,{childList:true,subtree:true,characterData:true});recoverCurrent().catch(e=>setStatus(`Startup recovery paused: ${e.message}`,"error"));}
+  window.addEventListener("pagehide",()=>{stopPolling();observer.disconnect();});if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",start,{once:true});else start();
 })();
