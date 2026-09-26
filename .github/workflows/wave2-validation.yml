@@ -1,0 +1,48 @@
+name: Wave 2 Required Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wave2-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  required-windows-commands:
+    name: Required PowerShell commands
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
+
+      - name: npm.cmd run check
+        shell: powershell
+        run: npm.cmd run check
+
+      - name: npm.cmd test
+        shell: powershell
+        run: npm.cmd test
+
+      - name: npm.cmd run verify:extension
+        shell: powershell
+        run: npm.cmd run verify:extension
+
+      - name: npm.cmd run validate:core
+        shell: powershell
+        run: npm.cmd run validate:core
+
+      - name: npm.cmd run package
+        shell: powershell
+        run: npm.cmd run package
