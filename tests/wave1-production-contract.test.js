@@ -9,7 +9,7 @@ const read = (name) => fs.readFileSync(path.join(root, name), 'utf8');
 
 test('Wave-1 authoritative stores are IndexedDB-backed and include the required durable entities', () => {
   assert.deepEqual(Store.STORE_NAMES, [
-    'meta', 'runs', 'tasks', 'conversation_bindings', 'deliveries', 'leases', 'worker_results', 'events'
+    'meta', 'runs', 'tasks', 'conversation_bindings', 'deliveries', 'leases', 'worker_results', 'events', 'upstream_events', 'faults'
   ]);
   const source = read('wave1-store.js');
   assert.match(source, /indexedDB\.open\(DB_NAME, DB_VERSION\)/);
