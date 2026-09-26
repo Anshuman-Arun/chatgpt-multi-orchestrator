@@ -3,6 +3,9 @@
   const Config=globalThis.YOLOConfig, Core=globalThis.MultiAgentWave2Core, Store=globalThis.MultiAgentWave2Store, Faults=globalThis.MultiAgentWave2Faults;
   if(!Config||!Core||!Store||!globalThis.chrome?.runtime?.onMessage)return;
   const BOOT_ID=globalThis.crypto?.randomUUID?`wave2_boot_${globalThis.crypto.randomUUID()}`:`wave2_boot_${Date.now().toString(36)}`;
+  let recoveryReady=false,recoveryFailure=null;
+  const RECOVERY_GATED_TYPES=new Set(["WAVE2_CREATE_ASSIGNMENT","WAVE2_ACQUIRE","WAVE2_BEGIN_COMPOSER_FILL","WAVE2_COMPOSER_FILLED","WAVE2_AUTHORIZE_SEND","WAVE2_CONSUME_SEND","WAVE2_MARK_SENT_UNCONFIRMED","WAVE2_FAIL_PRE_SEND","WAVE2_PAUSE_MANUAL","WAVE2_RECONCILE","WAVE2_RESUME_MANUAL"]);
+  function requireRecoveryReady(type){if(!RECOVERY_GATED_TYPES.has(type))return;if(recoveryReady)return;const e=new Error(recoveryFailure?`Wave-2 startup reconciliation failed: ${recoveryFailure.message||recoveryFailure}`:"Wave-2 startup reconciliation is still running");e.code=recoveryFailure?"wave2.recovery_failed":"wave2.recovery_not_ready";e.retry_at=Date.now()+250;throw e;}
 
   function senderLocator(sender){return Config.pageId(sender?.url||sender?.tab?.url||"");}
   function durable(locator){if(!Config.isDurablePageId(locator)){const e=new Error("Wave-2 requires a saved ChatGPT conversation (/c/...)");e.code="wave2.route_invalid";throw e;}return locator;}
@@ -41,13 +44,13 @@
   async function handleResume(m,s){const {binding}=await bindingForSender(s);if(!binding||binding.conversation_id!==m.conversation_id)throw new Error("Binding mismatch");return {ok:true,...await Store.resumeManual({conversation_id:m.conversation_id,task_id:m.task_id,actor_id:m.actor_id||"human",boot_id:BOOT_ID})};}
 
   async function processResponseReceived(d,actor,fence){
-    const existingResult=(await Store.getStatusByLocator(d.provider_locator)).result;
+    const existingResult=await Store.getWorkerResult(d.delivery_id);
     if(existingResult){const acked=await Store.ackPersistedResult({delivery_id:d.delivery_id,actor_id:actor,fence,boot_id:BOOT_ID});return continueAfterAck(acked.delivery,acked.result,acked.task,actor);}
     const parsed=Core.parseWorkerTerminal(d.response_text,d);
     if(!parsed.ok){
       await Store.annotateProtocolFailure({delivery_id:d.delivery_id,actor_id:actor,fence,code:parsed.code,boot_id:BOOT_ID});
       const task=await Store.getTask(d.task_id);
-      if(d.kind==="PROTOCOL_REPAIR"||Number(task?.protocol_repair_attempts||0)>=Number(task?.max_protocol_repairs||0)){
+      if(Number(task?.protocol_repair_attempts||0)>=Number(task?.max_protocol_repairs||0)){
         const esc=await Store.emitBudgetEscalation({task_id:d.task_id,boot_id:BOOT_ID,dimension:"protocol_repair"});
         return {ok:true,delivery:d,terminal:true,task_terminal:true,protocol_error:parsed.code,controller_escalation:esc.event};
       }
@@ -61,6 +64,7 @@
   }
 
   async function continueAfterAck(d,result,task,actor){
+    if(task?.controller_escalation?.reason==="BUDGET_EXHAUSTED")return {ok:true,delivery:d,result,terminal:true,task_terminal:true,controller_escalation:task.controller_escalation};
     if(result.status==="DONE")return {ok:true,delivery:d,result,terminal:true,task_terminal:true};
     if(result.status==="ESCALATE")return {ok:true,delivery:d,result,terminal:true,task_terminal:true,escalated:true};
     const budget=Core.budgetDecision(task,Date.now());
@@ -120,11 +124,30 @@
   async function journal(m,s){const d=await deliveryForSender(m.delivery_id,s), events=await Store.getEventsForDelivery(d.delivery_id);return {ok:true,events};}
   async function configureFaults(m){const plan=await Store.setFaultPlan({enabled:Boolean(m.enabled),points:m.points||[],actor_id:m.actor_id||"developer",boot_id:BOOT_ID});return {ok:true,plan};}
 
-  async function dispatch(m,s){switch(m.type){
+  async function dispatch(m,s){requireRecoveryReady(m.type);switch(m.type){
     case"WAVE2_BIND":return handleBind(m,s);case"WAVE2_STATUS":return handleStatus(m,s);case"WAVE2_CREATE_ASSIGNMENT":return handleCreate(m,s);case"WAVE2_ACQUIRE":return handleAcquire(m,s);case"WAVE2_BEGIN_COMPOSER_FILL":return handleBeginFill(m,s);case"WAVE2_COMPOSER_FILLED":return handleFilled(m,s);case"WAVE2_AUTHORIZE_SEND":return handleAuthorize(m,s);case"WAVE2_CONSUME_SEND":return handleConsume(m,s);case"WAVE2_MARK_SENT_UNCONFIRMED":return handleSent(m,s);case"WAVE2_FAIL_PRE_SEND":return handleFailPreSend(m,s);case"WAVE2_PAUSE_MANUAL":return handlePauseManual(m,s);case"WAVE2_FAULT_POINT":return handleFaultPoint(m);case"WAVE2_RECONCILE":return reconcile(m,s);case"WAVE2_RESUME_MANUAL":return handleResume(m,s);case"WAVE2_JOURNAL":return journal(m,s);case"WAVE2_CONFIGURE_FAULTS":return configureFaults(m);default:return {ok:false,code:"wave2.message_unknown",reason:"Unknown Wave-2 operation"};}}
   chrome.runtime.onMessage.addListener((m,s,reply)=>{if(!m?.type?.startsWith("WAVE2_"))return false;Promise.resolve(dispatch(m,s)).then(reply).catch(e=>reply({ok:false,code:e?.code||"wave2.error",reason:e?.message||String(e),retry_at:e?.retry_at||0}));return true;});
 
   const sendTab=(tabId,message)=>new Promise(resolve=>chrome.tabs?.sendMessage?.(tabId,message,r=>resolve(chrome.runtime.lastError?null:r||null))||resolve(null));
-  async function startupReconcile(){await Store.openDb();const ds=await Store.listNonterminalDeliveries();await Store.recordEvent({event_type:"STARTUP_RECONCILIATION",reason:"SERVICE_WORKER_BOOT",boot_id:BOOT_ID,evidence:{nonterminal_deliveries:ds.length}});if(!chrome.tabs?.query)return;chrome.tabs.query({url:["https://chatgpt.com/*","https://*.chatgpt.com/*"]},async tabs=>{for(const d of ds){const tab=(tabs||[]).find(t=>Config.pageId(t.url||t.pendingUrl||"")===d.provider_locator);if(!tab){await Store.recordEvent({event_type:"RECOVERY_TAB_UNAVAILABLE",reason:"TAB_UNAVAILABLE",delivery_id:d.delivery_id,boot_id:BOOT_ID});continue;}await sendTab(tab.id,{type:"WAVE2_RECOVER_DELIVERY",delivery_id:d.delivery_id,boot_id:BOOT_ID});}});}
-  startupReconcile().catch(e=>console.error(`Wave-2 startup reconciliation failed: ${e?.message||e}`));
+  const queryTabs=(query)=>new Promise(resolve=>{if(!chrome.tabs?.query)return resolve([]);chrome.tabs.query(query,tabs=>resolve(chrome.runtime.lastError?[]:tabs||[]));});
+  async function startupReconcile(){
+    await Store.openDb();
+    const ds=await Store.listNonterminalDeliveries();
+    await Store.recordEvent({event_type:"STARTUP_RECONCILIATION",reason:"SERVICE_WORKER_BOOT",boot_id:BOOT_ID,evidence:{nonterminal_deliveries:ds.length}});
+    const tabs=await queryTabs({url:["https://chatgpt.com/*","https://*.chatgpt.com/*"]});
+    const recoverable=[];
+    for(const d of ds){
+      const tab=tabs.find(t=>Config.pageId(t.url||t.pendingUrl||"")===d.provider_locator);
+      if(!tab){await Store.recordEvent({event_type:"RECOVERY_TAB_UNAVAILABLE",reason:"TAB_UNAVAILABLE",delivery_id:d.delivery_id,boot_id:BOOT_ID});continue;}
+      const observed=await sendTab(tab.id,{type:"WAVE2_READONLY_SNAPSHOT",delivery_id:d.delivery_id,boot_id:BOOT_ID});
+      if(!observed?.ok||!observed.snapshot){await Store.recordEvent({event_type:"RECOVERY_CONTENT_DETACHED",reason:"CONTENT_SCRIPT_DETACHED",delivery_id:d.delivery_id,boot_id:BOOT_ID,evidence:{tab_id:tab.id}});continue;}
+      const snap=observed.snapshot;
+      await Store.recordEvent({event_type:"RESTART_RECONCILIATION_OBSERVED",reason:String(snap.ui_state||Core.normalizeUiState(snap)||"READ_ONLY_SNAPSHOT"),delivery_id:d.delivery_id,boot_id:BOOT_ID,evidence:{tab_id:tab.id,route_fingerprint:Core.fingerprint(snap.route_identity||""),turns:Array.isArray(snap.turns)?snap.turns.length:0,composer_present:Boolean(snap.composer_present),generating:Boolean(snap.generating)}});
+      recoverable.push({tab,d});
+    }
+    recoveryReady=true;
+    await Store.recordEvent({event_type:"STARTUP_RECONCILIATION_READY",reason:"READ_ONLY_RECONCILIATION_COMPLETE",boot_id:BOOT_ID,evidence:{recoverable_tabs:recoverable.length,nonterminal_deliveries:ds.length}});
+    for(const item of recoverable)sendTab(item.tab.id,{type:"WAVE2_RECOVER_DELIVERY",delivery_id:item.d.delivery_id,boot_id:BOOT_ID}).catch?.(()=>{});
+  }
+  startupReconcile().catch(async e=>{recoveryFailure=e;await Store.recordEvent({event_type:"STARTUP_RECONCILIATION_FAILED",reason:e?.message||String(e),boot_id:BOOT_ID}).catch(()=>{});console.error(`Wave-2 startup reconciliation failed: ${e?.message||e}`);});
 })();
