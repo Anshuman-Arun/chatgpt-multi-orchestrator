@@ -61,7 +61,7 @@
     try {
       chrome.scripting.executeScript({
         target: { tabId: activeTab.id },
-        files: ["config.js", "lifecycle.js", "platforms.js", "shared.js", "commands.js", "command-ui.js", "content-state.js", "content.js", "command-runtime.js"]
+        files: ["config.js", "lifecycle.js", "platforms.js", "shared.js", "commands.js", "command-ui.js", "content-state.js", "content.js", "command-runtime.js", "wave1-core.js", "wave1-dom.js", "wave1-content.js"]
       }, () => resolve(!chrome.runtime.lastError));
     } catch {
       resolve(false);

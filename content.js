@@ -329,58 +329,26 @@
     return now() - lastAt >= cooldownSec * 1000;
   }
 
-  async function writeAndSubmit(prompt, actionPageId) {
-    let submissionAttempted = false;
-    try {
-      let composer = Platforms.findComposer(state.platform);
-      if (!composer) {
-        return { ok: false, code: "composer.missing", reason: "Message composer was not found", deliveryAmbiguous: false };
-      }
-      if (Platforms.composerText(composer).trim()) {
-        return { ok: false, code: "composer.busy", reason: "Message composer contains a draft", deliveryAmbiguous: false };
-      }
+  async function wave1BindingBlocksLegacySend(actionPageId) {
+    if (!Config.isDurablePageId(actionPageId)) return false;
+    const response = await backgroundSendWithRetry({ type: "WAVE1_STATUS" });
+    return Boolean(
+      response?.ok
+      && response?.binding
+      && String(response.binding.provider_locator || "") === String(actionPageId || "")
+    );
+  }
 
-      const previousSnapshot = Platforms.userMessageSnapshot(state.platform);
-      const expectedFingerprint = Commands.fingerprint(prompt);
-      Platforms.setComposerValue(composer, prompt);
-      await sleep(120);
-      if (state.destroyed || state.pageId !== actionPageId || currentPageId() !== actionPageId) {
-        return { ok: false, code: "route.changed", reason: "Conversation changed before the message was submitted", deliveryAmbiguous: false };
-      }
-      composer = Platforms.findComposer(state.platform) || composer;
-      if (Commands.fingerprint(Platforms.composerText(composer)) !== expectedFingerprint) {
-        return { ok: false, code: "composer.write_unconfirmed", reason: "The composer did not retain the queued message", deliveryAmbiguous: false };
-      }
-
-      submissionAttempted = true;
-      if (!Platforms.submitComposer(state.platform, composer)) {
-        return { ok: false, code: "composer.submit_failed", reason: "Message could not be submitted", deliveryAmbiguous: true };
-      }
-
-      const confirmationDeadline = now() + 15_000;
-      while (now() < confirmationDeadline) {
-        if (state.destroyed || state.pageId !== actionPageId || currentPageId() !== actionPageId) {
-          return { ok: false, code: "route.changed", reason: "Conversation changed before delivery could be confirmed", deliveryAmbiguous: true };
-        }
-        if (Platforms.submissionObserved(state.platform, { expectedText: prompt, previousSnapshot })) {
-          return { ok: true, deliveryAmbiguous: true };
-        }
-        await sleep(150);
-      }
-      return {
-        ok: false,
-        code: "composer.unconfirmed",
-        reason: "The matching user message did not appear in the conversation",
-        deliveryAmbiguous: true
-      };
-    } catch (error) {
-      return {
-        ok: false,
-        code: "queue.exception",
-        reason: Shared.errorMessage(error),
-        deliveryAmbiguous: submissionAttempted
-      };
-    }
+  async function writeAndSubmit(_prompt, _actionPageId) {
+    // This project build reserves all ChatGPT Send side effects for the durable
+    // Wave-1 Delivery path. Legacy YOLO queue/workflow automation remains
+    // available for inspection/editing, but it cannot invoke Send directly.
+    return {
+      ok: false,
+      code: "queue.router_only",
+      reason: "Legacy YOLO Send is disabled; use the durable Wave-1 Delivery sender",
+      deliveryAmbiguous: false
+    };
   }
 
   function actionDedupeKey(action, prompt, reason) {

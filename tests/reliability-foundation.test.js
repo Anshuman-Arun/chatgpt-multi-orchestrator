@@ -66,8 +66,11 @@ test('all automated text submissions use the durable queue', () => {
   const sendPrompt = content.slice(content.indexOf('async function sendPrompt'), content.indexOf('async function sendContinue'));
   assert.match(sendPrompt, /type: "YOLO_QUEUE_ADD"/);
   assert.doesNotMatch(sendPrompt, /writeAndSubmit/);
-  assert.match(content, /previousSnapshot = Platforms\.userMessageSnapshot/);
   assert.match(content, /YOLO_QUEUE_MARK_SUBMITTING/);
+  const legacySubmit = content.slice(content.indexOf('async function writeAndSubmit'), content.indexOf('function actionDedupeKey'));
+  assert.match(legacySubmit, /queue\.router_only/);
+  assert.doesNotMatch(legacySubmit, /\.click\(|requestSubmit\(/);
+  assert.match(read('wave1-content.js'), /Dom\.invokeAuthorizedSend\(consumed\.permit/);
 });
 
 test('workflow chrome dispatches the truthful stop action', () => {
@@ -110,7 +113,9 @@ test('runtime reset fails closed when guard storage cannot be reset', () => {
 });
 
 test('delivery confirmation uses a wall-clock deadline', () => {
-  const content = read('content.js');
-  assert.match(content, /confirmationDeadline = now\(\) \+ 15_000/);
-  assert.doesNotMatch(content, /attempt < 50/);
+  const background = read('wave1-background.js');
+  assert.match(background, /const RECEIPT_WINDOW_MS = 15_000/);
+  assert.match(background, /Date\.now\(\) - Math\.max\(0, Number\(delivery\.send_consumed_at\) \|\| 0\)/);
+  assert.match(background, /elapsed >= RECEIPT_WINDOW_MS/);
+  assert.doesNotMatch(background, /attempt < 50/);
 });
