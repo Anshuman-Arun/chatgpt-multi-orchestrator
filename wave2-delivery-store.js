@@ -79,7 +79,31 @@
     });
   }
 
-  async function acquireLease({delivery_id,actor_id,boot_id="",lease_ms=LEASE_MS}){const actor=String(actor_id||"");if(!actor)throw new Error("Wave-2 actor ID required");return withTx(["deliveries","leases","meta","events"],"readwrite",async tx=>{const t=now();let d=await readDelivery(tx,delivery_id);const leases=os(tx,"leases"),existing=await req(leases.get(d.conversation_id)),same=existing&&existing.owner_actor_id===actor&&Number(existing.expires_at)>t;if(same)return {delivery:d,lease:existing,reconciliation_only:Core.POST_BOUNDARY_STATES.has(d.state),taken_over:false};if(existing&&existing.owner_actor_id!==actor&&Number(existing.expires_at)>t&&d.state==="SUBMITTING"&&d.send_consumed_at){const e=new Error("Prior actor holds a still-valid consumed Send capability; takeover deferred until permit expiry");e.code="wave2.lease_handoff_deferred";e.retry_at=Number(existing.expires_at);throw e;}const fence=Math.max(0,Number(existing?.fence)||0)+1,lease={conversation_id:d.conversation_id,owner_actor_id:actor,fence,expires_at:t+Math.max(30000,Number(lease_ms)||LEASE_MS),updated_at:t};leases.put(lease);const previous=d.state;if(d.state==="PENDING")d=transition(d,"CLAIMED",t);d.actor_id=actor;d.lease_fence=fence;d.updated_at=t;os(tx,"deliveries").put(d);await appendEvent(tx,{delivery:d,previous_state:previous,next_state:d.state,event_type:existing?"LEASE_TAKEN_OVER":"LEASE_ACQUIRED",reason:Core.POST_BOUNDARY_STATES.has(d.state)?"RECONCILIATION_AUTHORITY":"SENDER_AUTHORITY",actor_id:actor,boot_id,lease_fence:fence,evidence:{prior_actor:existing?.owner_actor_id||"",lease_expires_at:lease.expires_at}});return {delivery:d,lease,reconciliation_only:Core.POST_BOUNDARY_STATES.has(d.state),taken_over:Boolean(existing)};});}
+  async function acquireLease({delivery_id,actor_id,boot_id="",lease_ms=LEASE_MS}){
+    const actor=String(actor_id||"");if(!actor)throw new Error("Wave-2 actor ID required");
+    return withTx(["deliveries","leases","meta","events"],"readwrite",async tx=>{
+      const t=now();let d=await readDelivery(tx,delivery_id);const leases=os(tx,"leases"),existing=await req(leases.get(d.conversation_id));
+      const same=existing&&existing.owner_actor_id===actor&&Number(existing.expires_at)>t;
+      if(same){
+        const previous=d.state,fence=Number(existing.fence);
+        if(d.state==="PENDING")d=transition(d,"CLAIMED",t);
+        const adopted=String(d.actor_id||"")!==actor||Number(d.lease_fence)!==fence||d.state!==previous;
+        if(adopted){
+          d.actor_id=actor;d.lease_fence=fence;d.updated_at=t;os(tx,"deliveries").put(d);
+          await appendEvent(tx,{delivery:d,previous_state:previous,next_state:d.state,event_type:"LEASE_REUSED",reason:Core.POST_BOUNDARY_STATES.has(d.state)?"RECONCILIATION_AUTHORITY":"SENDER_AUTHORITY",actor_id:actor,boot_id,lease_fence:fence,evidence:{lease_expires_at:existing.expires_at}});
+        }
+        return {delivery:d,lease:existing,reconciliation_only:Core.POST_BOUNDARY_STATES.has(d.state),taken_over:false,reused:true};
+      }
+      if(existing&&existing.owner_actor_id!==actor&&Number(existing.expires_at)>t&&d.state==="SUBMITTING"&&d.send_consumed_at){
+        const e=new Error("Prior actor holds a still-valid consumed Send capability; takeover deferred until permit expiry");e.code="wave2.lease_handoff_deferred";e.retry_at=Number(existing.expires_at);throw e;
+      }
+      const fence=Math.max(0,Number(existing?.fence)||0)+1,lease={conversation_id:d.conversation_id,owner_actor_id:actor,fence,expires_at:t+Math.max(30000,Number(lease_ms)||LEASE_MS),updated_at:t};
+      leases.put(lease);const previous=d.state;if(d.state==="PENDING")d=transition(d,"CLAIMED",t);d.actor_id=actor;d.lease_fence=fence;d.updated_at=t;os(tx,"deliveries").put(d);
+      await appendEvent(tx,{delivery:d,previous_state:previous,next_state:d.state,event_type:existing?"LEASE_TAKEN_OVER":"LEASE_ACQUIRED",reason:Core.POST_BOUNDARY_STATES.has(d.state)?"RECONCILIATION_AUTHORITY":"SENDER_AUTHORITY",actor_id:actor,boot_id,lease_fence:fence,evidence:{prior_actor:existing?.owner_actor_id||"",lease_expires_at:lease.expires_at}});
+      return {delivery:d,lease,reconciliation_only:Core.POST_BOUNDARY_STATES.has(d.state),taken_over:Boolean(existing),reused:false};
+    });
+  }
+
   async function renewLease({delivery_id,actor_id,fence,boot_id=""}){return withTx(["deliveries","leases","meta","events"],"readwrite",async tx=>{const t=now(),d=await readDelivery(tx,delivery_id),l=await assertFence(tx,d,actor_id,fence,{fresh:false,at:t});if(Number(l.expires_at)<=t){if(Core.POST_BOUNDARY_STATES.has(d.state))return {delivery:d,lease:l,renewed:false,reconciliation_only:true};const e=new Error("Wave-2 lease expired before ambiguity boundary");e.code="wave2.lease_expired";throw e;}if(Number(l.expires_at)-t>LEASE_RENEW_WINDOW_MS)return {delivery:d,lease:l,renewed:false,reconciliation_only:Core.POST_BOUNDARY_STATES.has(d.state)};l.expires_at=t+LEASE_MS;l.updated_at=t;os(tx,"leases").put(l);await appendEvent(tx,{delivery:d,previous_state:d.state,next_state:d.state,event_type:"LEASE_RENEWED",reason:"ACTIVE_RECONCILIATION",actor_id,boot_id,lease_fence:fence,evidence:{lease_expires_at:l.expires_at}});return {delivery:d,lease:l,renewed:true,reconciliation_only:Core.POST_BOUNDARY_STATES.has(d.state)};});}
   async function transitionWithFence({delivery_id,actor_id,fence,expected,next,reason,event_type="STATE_TRANSITION",boot_id="",evidence={},fresh=true,mutate=null}){return withTx(["deliveries","leases","meta","events"],"readwrite",async tx=>{const t=now();let d=await readDelivery(tx,delivery_id);if(d.state!==expected)throw new Error(`Wave-2 Delivery is ${d.state}, expected ${expected}`);await assertFence(tx,d,actor_id,fence,{fresh,at:t});const prev=d.state;d=transition(d,next,t);if(mutate)d=mutate(d,t)||d;os(tx,"deliveries").put(d);await appendEvent(tx,{delivery:d,previous_state:prev,next_state:next,event_type,reason,actor_id,boot_id,lease_fence:fence,evidence});return d;});}
   const beginComposerFilling=a=>transitionWithFence({...a,expected:"CLAIMED",next:"COMPOSER_FILLING",reason:"BASELINE_CAPTURED_COMPOSER_EMPTY",mutate:d=>({...d,baseline:a.baseline})});
