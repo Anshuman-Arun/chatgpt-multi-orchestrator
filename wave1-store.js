@@ -9,11 +9,11 @@
   if (!Core) throw new Error("MultiAgentWave1Core is required");
 
   const DB_NAME = "chatgpt_multi_orchestrator_wave1";
-  const DB_VERSION = 2;
+  const DB_VERSION = 3;
   const LEASE_MS = 2 * 60 * 1000;
   const LEASE_RENEW_WINDOW_MS = 30 * 1000;
   const STORE_NAMES = Object.freeze([
-    "meta", "runs", "tasks", "conversation_bindings", "deliveries", "leases", "worker_results", "events"
+    "meta", "runs", "tasks", "conversation_bindings", "deliveries", "leases", "worker_results", "events", "upstream_events", "faults"
   ]);
   const ALLOW_NEW_DELIVERY_AFTER = new Set(["ACKED", "FAILED", "RESPONSE_FAILED", "RESPONSE_SUPERSEDED"]);
 
@@ -81,19 +81,20 @@
         const upstream = upgradeStore(db, request, "upstream_events", { keyPath: "event_id" });
         ensureIndex(upstream, "task_id", "task_id", { unique: false });
         ensureIndex(upstream, "dedupe_key", "dedupe_key", { unique: true });
-        const faults = upgradeStore(db, request, "faults", { keyPath: "fault_id" });
+        let faults;
+        if (db.objectStoreNames.contains("faults")) {
+          const existing = request.transaction.objectStore("faults");
+          if (String(existing.keyPath) !== "fault_id") {
+            db.deleteObjectStore("faults");
+            faults = db.createObjectStore("faults", { keyPath: "fault_id" });
+          } else {
+            faults = existing;
+          }
+        } else {
+          faults = db.createObjectStore("faults", { keyPath: "fault_id" });
+        }
         ensureIndex(faults, "delivery_id", "delivery_id", { unique: false });
         ensureIndex(faults, "point", "point", { unique: false });
-        const upstream = ensureStore(db, "upstream_events", { keyPath: "event_id" });
-        if (upstream) {
-          upstream.createIndex("task_id", "task_id", { unique: false });
-          upstream.createIndex("dedupe_key", "dedupe_key", { unique: true });
-        }
-        const faults = ensureStore(db, "faults", { keyPath: "fault_id" });
-        if (faults) {
-          faults.createIndex("delivery_id", "delivery_id", { unique: false });
-          faults.createIndex("point", "point", { unique: false });
-        }
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => {
