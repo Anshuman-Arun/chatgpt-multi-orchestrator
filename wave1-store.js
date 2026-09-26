@@ -45,6 +45,16 @@
     return db.objectStoreNames.contains(name) ? null : db.createObjectStore(name, options);
   }
 
+  function upgradeStore(db, request, name, options) {
+    return db.objectStoreNames.contains(name)
+      ? request.transaction.objectStore(name)
+      : db.createObjectStore(name, options);
+  }
+
+  function ensureIndex(objectStore, name, keyPath, options = {}) {
+    if (!objectStore.indexNames.contains(name)) objectStore.createIndex(name, keyPath, options);
+  }
+
   function openDb() {
     if (dbPromise) return dbPromise;
     if (!globalThis.indexedDB) return Promise.reject(new Error("IndexedDB is unavailable"));
@@ -52,23 +62,28 @@
       const request = globalThis.indexedDB.open(DB_NAME, DB_VERSION);
       request.onupgradeneeded = () => {
         const db = request.result;
-        ensureStore(db, "meta", { keyPath: "key" });
-        ensureStore(db, "runs", { keyPath: "run_id" });
-        ensureStore(db, "tasks", { keyPath: "task_id" });
-        const bindings = ensureStore(db, "conversation_bindings", { keyPath: "conversation_id" });
-        if (bindings) bindings.createIndex("provider_locator", "provider_locator", { unique: true });
-        const deliveries = ensureStore(db, "deliveries", { keyPath: "delivery_id" });
-        if (deliveries) {
-          deliveries.createIndex("conversation_id", "conversation_id", { unique: false });
-          deliveries.createIndex("created_at", "created_at", { unique: false });
-        }
-        ensureStore(db, "leases", { keyPath: "conversation_id" });
-        ensureStore(db, "worker_results", { keyPath: "delivery_id" });
-        const events = ensureStore(db, "events", { keyPath: "seq" });
-        if (events) {
-          events.createIndex("delivery_id", "delivery_id", { unique: false });
-          events.createIndex("conversation_id", "conversation_id", { unique: false });
-        }
+        upgradeStore(db, request, "meta", { keyPath: "key" });
+        upgradeStore(db, request, "runs", { keyPath: "run_id" });
+        upgradeStore(db, request, "tasks", { keyPath: "task_id" });
+        const bindings = upgradeStore(db, request, "conversation_bindings", { keyPath: "conversation_id" });
+        ensureIndex(bindings, "provider_locator", "provider_locator", { unique: true });
+        const deliveries = upgradeStore(db, request, "deliveries", { keyPath: "delivery_id" });
+        ensureIndex(deliveries, "conversation_id", "conversation_id", { unique: false });
+        ensureIndex(deliveries, "created_at", "created_at", { unique: false });
+        ensureIndex(deliveries, "task_id", "task_id", { unique: false });
+        upgradeStore(db, request, "leases", { keyPath: "conversation_id" });
+        const results = upgradeStore(db, request, "worker_results", { keyPath: "delivery_id" });
+        ensureIndex(results, "task_id", "task_id", { unique: false });
+        const events = upgradeStore(db, request, "events", { keyPath: "seq" });
+        ensureIndex(events, "delivery_id", "delivery_id", { unique: false });
+        ensureIndex(events, "conversation_id", "conversation_id", { unique: false });
+        ensureIndex(events, "task_id", "task_id", { unique: false });
+        const upstream = upgradeStore(db, request, "upstream_events", { keyPath: "event_id" });
+        ensureIndex(upstream, "task_id", "task_id", { unique: false });
+        ensureIndex(upstream, "dedupe_key", "dedupe_key", { unique: true });
+        const faults = upgradeStore(db, request, "faults", { keyPath: "fault_id" });
+        ensureIndex(faults, "delivery_id", "delivery_id", { unique: false });
+        ensureIndex(faults, "point", "point", { unique: false });
         const upstream = ensureStore(db, "upstream_events", { keyPath: "event_id" });
         if (upstream) {
           upstream.createIndex("task_id", "task_id", { unique: false });
