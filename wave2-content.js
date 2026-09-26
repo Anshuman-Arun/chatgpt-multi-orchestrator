@@ -51,7 +51,7 @@
   async function recoverDelivery(deliveryId){
     if(active&&active.delivery_id!==deliveryId)return false;
     const acquired=await runtimeSend({type:"WAVE2_ACQUIRE",delivery_id:deliveryId,actor_id:actorId});
-    if(!acquired.ok){if(acquired.code==="wave2.lease_handoff_deferred"){setStatus(`Recovery deferred until the prior consumed Send permit expires. No resend will occur.`,"info");return false;}setStatus(`Recovery blocked: ${compact(acquired)}`,"error");return false;}
+    if(!acquired.ok){if(acquired.code==="wave2.lease_handoff_deferred"){const retryAt=Math.max(Date.now()+250,Number(acquired.retry_at)||0);const delay=Math.max(250,retryAt-Date.now()+50);setStatus(`Recovery deferred until the prior consumed Send permit expires. No resend will occur; reconciliation will retry after the safe handoff boundary.`,"info");setTimeout(()=>recoverDelivery(deliveryId).catch(e=>setStatus(`Deferred recovery paused: ${e.message}`,"error")),delay);return false;}setStatus(`Recovery blocked: ${compact(acquired)}`,"error");return false;}
     let d=acquired.delivery;const fence=acquired.lease.fence;active={delivery_id:d.delivery_id,fence};setStatus(summary(d,`lease fence: ${fence}${acquired.reconciliation_only?" (reconciliation only)":""}`));
     if(acquired.controller_escalation||acquired.terminal){active=null;stopPolling();setStatus(summary(d,"Hard budget exhausted before Send; controller escalation persisted and no user turn was sent."),"error");return false;}
     if(["CLAIMED","COMPOSER_FILLING","COMPOSER_FILLED"].includes(d.state)){sendCritical=true;try{return await continuePreSend(d,fence);}finally{sendCritical=false;}}
