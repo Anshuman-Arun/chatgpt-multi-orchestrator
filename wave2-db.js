@@ -6,15 +6,56 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, (Core) => {
   "use strict";
   if (!Core) throw new Error("MultiAgentWave2Core is required");
-  const DB_NAME="chatgpt_multi_orchestrator_wave1", DB_VERSION=2, LEASE_MS=120000, LEASE_RENEW_WINDOW_MS=30000;
+  const DB_NAME="chatgpt_multi_orchestrator_wave1", DB_VERSION=3, LEASE_MS=120000, LEASE_RENEW_WINDOW_MS=30000;
   const STORE_NAMES=Object.freeze(["meta","runs","tasks","conversation_bindings","deliveries","leases","worker_results","events","upstream_events","faults"]);
   let dbPromise=null;
   const now=()=>Date.now();
   function makeId(prefix){if(globalThis.crypto?.randomUUID)return `${prefix}_${globalThis.crypto.randomUUID()}`;return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,12)}`;}
   function req(r){return new Promise((resolve,reject)=>{r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error||new Error("IndexedDB request failed"));});}
   function txDone(tx){return new Promise((resolve,reject)=>{tx.oncomplete=()=>resolve();tx.onabort=()=>reject(tx.error||new Error("IndexedDB transaction aborted"));tx.onerror=()=>{};});}
-  function ensureStore(db,r,name,options){return db.objectStoreNames.contains(name)?r.transaction.objectStore(name):db.createObjectStore(name,options);}function ensureIndex(s,name,key,options={}){if(!s.indexNames.contains(name))s.createIndex(name,key,options);}
-  function openDb(){if(dbPromise)return dbPromise;if(!globalThis.indexedDB)return Promise.reject(new Error("IndexedDB is unavailable"));dbPromise=new Promise((resolve,reject)=>{const r=globalThis.indexedDB.open(DB_NAME,DB_VERSION);r.onupgradeneeded=()=>{const db=r.result;ensureStore(db,r,"meta",{keyPath:"key"});ensureStore(db,r,"runs",{keyPath:"run_id"});ensureStore(db,r,"tasks",{keyPath:"task_id"});const b=ensureStore(db,r,"conversation_bindings",{keyPath:"conversation_id"});ensureIndex(b,"provider_locator","provider_locator",{unique:true});const d=ensureStore(db,r,"deliveries",{keyPath:"delivery_id"});ensureIndex(d,"conversation_id","conversation_id",{unique:false});ensureIndex(d,"created_at","created_at",{unique:false});ensureIndex(d,"task_id","task_id",{unique:false});ensureStore(db,r,"leases",{keyPath:"conversation_id"});const wr=ensureStore(db,r,"worker_results",{keyPath:"delivery_id"});ensureIndex(wr,"task_id","task_id",{unique:false});const e=ensureStore(db,r,"events",{keyPath:"seq"});ensureIndex(e,"delivery_id","delivery_id",{unique:false});ensureIndex(e,"conversation_id","conversation_id",{unique:false});ensureIndex(e,"task_id","task_id",{unique:false});const u=ensureStore(db,r,"upstream_events",{keyPath:"event_id"});ensureIndex(u,"task_id","task_id",{unique:false});ensureIndex(u,"dedupe_key","dedupe_key",{unique:true});const faults=ensureStore(db,r,"faults",{keyPath:"fault_id"});ensureIndex(faults,"delivery_id","delivery_id",{unique:false});ensureIndex(faults,"point","point",{unique:false});};r.onsuccess=()=>resolve(r.result);r.onerror=()=>{dbPromise=null;reject(r.error||new Error("Could not open Wave-2 IndexedDB"));};r.onblocked=()=>reject(new Error("Wave-2 IndexedDB upgrade is blocked"));});return dbPromise;}
+  function ensureStore(db,name,options){return db.objectStoreNames.contains(name)?null:db.createObjectStore(name,options);}
+  function ensureIndex(store,name,keyPath,options){if(!store.indexNames.contains(name))store.createIndex(name,keyPath,options);}
+  function openDb(){
+    if(dbPromise)return dbPromise;
+    if(!globalThis.indexedDB)return Promise.reject(new Error("IndexedDB is unavailable"));
+    dbPromise=new Promise((resolve,reject)=>{
+      const r=globalThis.indexedDB.open(DB_NAME,DB_VERSION);
+      r.onupgradeneeded=()=>{
+        const db=r.result,tx=r.transaction;
+        ensureStore(db,"meta",{keyPath:"key"});
+        ensureStore(db,"runs",{keyPath:"run_id"});
+        ensureStore(db,"tasks",{keyPath:"task_id"});
+        const b=ensureStore(db,"conversation_bindings",{keyPath:"conversation_id"})||tx.objectStore("conversation_bindings");
+        ensureIndex(b,"provider_locator","provider_locator",{unique:true});
+        const d=ensureStore(db,"deliveries",{keyPath:"delivery_id"})||tx.objectStore("deliveries");
+        ensureIndex(d,"conversation_id","conversation_id",{unique:false});
+        ensureIndex(d,"created_at","created_at",{unique:false});
+        ensureIndex(d,"task_id","task_id",{unique:false});
+        ensureStore(db,"leases",{keyPath:"conversation_id"});
+        ensureStore(db,"worker_results",{keyPath:"delivery_id"});
+        const e=ensureStore(db,"events",{keyPath:"seq"})||tx.objectStore("events");
+        ensureIndex(e,"delivery_id","delivery_id",{unique:false});
+        ensureIndex(e,"conversation_id","conversation_id",{unique:false});
+        const u=ensureStore(db,"upstream_events",{keyPath:"event_id"})||tx.objectStore("upstream_events");
+        ensureIndex(u,"task_id","task_id",{unique:false});
+        ensureIndex(u,"dedupe_key","dedupe_key",{unique:true});
+        let f;
+        if(db.objectStoreNames.contains("faults")){
+          const existing=tx.objectStore("faults");
+          if(String(existing.keyPath)!=="fault_id"){
+            db.deleteObjectStore("faults");
+            f=db.createObjectStore("faults",{keyPath:"fault_id"});
+          }else f=existing;
+        }else f=db.createObjectStore("faults",{keyPath:"fault_id"});
+        ensureIndex(f,"delivery_id","delivery_id",{unique:false});
+        ensureIndex(f,"point","point",{unique:false});
+      };
+      r.onsuccess=()=>resolve(r.result);
+      r.onerror=()=>{dbPromise=null;reject(r.error||new Error("Could not open Wave-2 IndexedDB"));};
+      r.onblocked=()=>reject(new Error("Wave-2 IndexedDB upgrade is blocked"));
+    });
+    return dbPromise;
+  }
   async function withTx(names,mode,fn){const db=await openDb(),tx=db.transaction([...new Set(names)],mode),done=txDone(tx);try{const out=await fn(tx);await done;return out;}catch(error){try{tx.abort();}catch{}await done.catch(()=>{});throw error;}}
   const os=(tx,name)=>tx.objectStore(name);
   function compactEvidence(v){const out={};if(!v||typeof v!=="object")return out;for(const[k,x]of Object.entries(v)){if(x==null)continue;out[k]=typeof x==="boolean"||typeof x==="number"?x:String(x).slice(0,240);}return out;}
