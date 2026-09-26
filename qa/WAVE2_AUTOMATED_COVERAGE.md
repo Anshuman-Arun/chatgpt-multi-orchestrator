@@ -111,3 +111,5 @@ This keeps the key test shape as **execute → crash/runtime loss → reconstruc
 ## Live evidence still required
 
 Automated coverage is necessary but not sufficient. `docs/WAVE2_COMPREHENSIVE_LIVE_TEST.md` defines the single authenticated campaign required before treating the Wave-2 browser gate as passed.
+
+For that campaign, `MultiAgentWave2Dev.exportEvidence()` provides a read-only, privacy-reduced snapshot of the bound conversation's durable Wave-2 records plus a sanitized live-DOM summary. It omits router payload text and assistant response text. `docs/WAVE2_LIVE_QA_EVIDENCE_SHEET.md` is the recording template. These helpers improve evidence collection but do **not** convert the live gate into an automated or mock-DOM gate.
