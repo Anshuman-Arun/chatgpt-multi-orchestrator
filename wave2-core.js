@@ -36,7 +36,7 @@
     SENT_UNCONFIRMED: new Set(["DELIVERED", "DELIVERY_UNKNOWN"]),
     DELIVERED: new Set(["RESPONSE_STARTED", "RESPONSE_FAILED", "RESPONSE_SUPERSEDED"]),
     RESPONSE_STARTED: new Set(["RESPONSE_RECEIVED", "RESPONSE_FAILED", "RESPONSE_SUPERSEDED"]),
-    RESPONSE_RECEIVED: new Set(["ACKED", "FAILED"]),
+    RESPONSE_RECEIVED: new Set(["ACKED", "RESPONSE_SUPERSEDED"]),
     ACKED: new Set(), DELIVERY_UNKNOWN: new Set(), FAILED: new Set(), RESPONSE_FAILED: new Set(), RESPONSE_SUPERSEDED: new Set()
   });
 
@@ -152,6 +152,7 @@
     if (transport.content_detached) return "CONTENT_SCRIPT_DETACHED";
     if (transport.tab_unavailable) return "TAB_UNAVAILABLE";
     const code=String(snapshot.error_code||"").toLowerCase();
+    if(code.includes("user_required")||code.includes("user required")) return "USER_REQUIRED";
     if(code.includes("auth")) return "AUTHENTICATION_REQUIRED";
     if(code.includes("rate")) return "RATE_LIMITED";
     if(code.includes("connection")||code.includes("offline")||code.includes("waiting")) return "CONNECTION_WAITING";
