@@ -25,12 +25,15 @@
   }
 
   function messageRoot(element) {
-    return element?.closest?.("[data-message-id], article[data-testid^='conversation-turn'], article") || element || null;
+    return element?.closest?.("[data-chatgpt-search-unit-key], [data-message-id], article[data-testid^='conversation-turn'], article") || element || null;
   }
 
   function explicitMessageIdentity(element) {
     const root = messageRoot(element);
-    const messageId = String(element?.getAttribute?.("data-message-id") || root?.getAttribute?.("data-message-id") || "").trim();
+    const selectedMessageId = root?.querySelector?.("[data-chatgpt-selection-message-id]")?.getAttribute?.("data-chatgpt-selection-message-id");
+    const searchMessageIds = String(root?.getAttribute?.("data-chatgpt-search-message-ids") || "").trim();
+    const messageId = String(element?.getAttribute?.("data-message-id") || root?.getAttribute?.("data-message-id")
+      || selectedMessageId || searchMessageIds.split(/\s+/)[0] || "").trim();
     if (messageId) return { identity_key: `msg:${messageId}`, identity_kind: "message_id" };
     const testId = String(root?.getAttribute?.("data-testid") || "").trim();
     if (/^conversation-turn-/i.test(testId)) return { identity_key: `turn:${testId}`, identity_kind: "turn_id" };
@@ -40,8 +43,12 @@
   }
 
   function turnDescriptor(element, order) {
-    const role = String(element?.getAttribute?.("data-message-author-role") || "").toLowerCase();
-    const text = String(element?.innerText || element?.textContent || "")
+    const unitKey = String(element?.getAttribute?.("data-chatgpt-search-unit-key") || "");
+    const role = String(element?.getAttribute?.("data-message-author-role") || unitKey.match(/:(user|assistant)$/i)?.[1] || "").toLowerCase();
+    const body = role === "user" ? element?.querySelector?.("[data-user-message-bubble]")
+      : role === "assistant" ? element?.querySelector?.("[data-chatgpt-selection-message-id]") : null;
+    const content = role === "user" ? body?.querySelector?.("[data-search-result-target] .whitespace-pre-wrap") || body : body;
+    const text = String(content?.innerText || content?.textContent || element?.innerText || element?.textContent || "")
       .replace(/\r\n?/g, "\n")
       .trim();
     const root = messageRoot(element);
@@ -67,7 +74,7 @@
   }
 
   function classifyError(adapter, documentLike = document) {
-    const turnNodes = Array.from(documentLike.querySelectorAll("[data-message-author-role='user'], [data-message-author-role='assistant']"));
+    const turnNodes = Array.from(documentLike.querySelectorAll("[data-message-author-role='user'], [data-message-author-role='assistant'], [data-chatgpt-search-unit-key$=':user'], [data-chatgpt-search-unit-key$=':assistant']"));
     const latestTurnRoot = messageRoot(turnNodes.at(-1));
     const explicit = Platforms.findErrorState(adapter, documentLike);
     const candidates = [];
@@ -75,7 +82,7 @@
     for (const element of documentLike.querySelectorAll("[role='alert'], [data-testid*='error' i], button")) candidates.push(element);
     for (const element of Array.from(new Set(candidates))) {
       if (Platforms.visible && !Platforms.visible(element)) continue;
-      const turnNode = element.closest?.("[data-message-author-role='user'], [data-message-author-role='assistant'], article[data-testid^='conversation-turn'], article");
+      const turnNode = element.closest?.("[data-message-author-role='user'], [data-message-author-role='assistant'], [data-chatgpt-search-unit-key], article[data-testid^='conversation-turn'], article");
       const containingTurn = turnNode ? messageRoot(turnNode) : null;
       if (containingTurn && containingTurn !== latestTurnRoot) continue;
       const text = Core.normalizeText(element?.innerText || element?.textContent || element?.getAttribute?.("aria-label") || "").toLowerCase();
@@ -90,6 +97,21 @@
   function rawComposerText(composer) {
     if (!composer) return "";
     const tag = String(composer.tagName || "").toUpperCase();
+    const placeholder = composer.childElementCount === 1 ? composer.firstElementChild : null;
+    if (tag !== "TEXTAREA" && tag !== "INPUT"
+      && placeholder?.matches?.('p[data-empty-paragraph="true"][data-placeholder].placeholder')
+      && placeholder.querySelector?.("br.ProseMirror-trailingBreak")
+      && !placeholder.textContent && !composer.textContent) return "";
+    if (composer.matches?.("[data-composer-markdown]") && composer.childElementCount > 0) {
+      const paragraphs = Array.from(composer.children || []);
+      const plain = paragraphs.every((paragraph) => String(paragraph.tagName || "").toUpperCase() === "P"
+        && Array.from(paragraph.childNodes || []).every((child) => child.nodeType === 3
+          || (child.nodeType === 1 && String(child.tagName || "").toUpperCase() === "BR"
+            && String(child.className || "").split(/\s+/).includes("ProseMirror-trailingBreak"))));
+      if (plain && (paragraphs.length > 1 || composer.textContent)) {
+        return Core.canonicalText(paragraphs.map((paragraph) => paragraph.textContent || "").join("\n"));
+      }
+    }
     const value = tag === "TEXTAREA" || tag === "INPUT"
       ? composer.value
       : (composer.innerText ?? composer.textContent ?? "");
@@ -106,7 +128,7 @@
   }
 
   function thinkingActive(documentLike = document) {
-    const assistantNodes = Array.from(documentLike.querySelectorAll("[data-message-author-role='assistant']"));
+    const assistantNodes = Array.from(documentLike.querySelectorAll("[data-message-author-role='assistant'], [data-chatgpt-search-unit-key$=':assistant']"));
     const latestAssistantRoot = messageRoot(assistantNodes.at(-1));
     const candidates = documentLike.querySelectorAll(
       "[data-testid*='thinking' i], [data-testid*='reasoning' i], [aria-label*='thinking' i], [aria-label*='reasoning' i]"
@@ -130,7 +152,7 @@
     requireRuntime();
     const adapter = Platforms.adapterForLocation(locationLike);
     const composer = Platforms.findComposer(adapter, documentLike);
-    const nodes = Array.from(documentLike.querySelectorAll("[data-message-author-role='user'], [data-message-author-role='assistant']"));
+    const nodes = Array.from(documentLike.querySelectorAll("[data-message-author-role='user'], [data-message-author-role='assistant'], [data-chatgpt-search-unit-key$=':user'], [data-chatgpt-search-unit-key$=':assistant']"));
     const seen = new Set();
     const turns = [];
     for (const node of nodes) {
@@ -259,3 +281,4 @@
     invokeAuthorizedSend
   });
 });
+
