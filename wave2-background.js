@@ -16,7 +16,10 @@
   async function handleStatus(_m,s){const locator=durable(senderLocator(s));return {ok:true,...await Store.getStatusByLocator(locator),boot_id:BOOT_ID};}
   async function handleCreate(m,s){const {locator,binding}=await bindingForSender(s);if(!binding||binding.conversation_id!==m.conversation_id)throw new Error("Bind this conversation first");requireRoute(s,locator);const instruction=String(m.instruction||"").trim();if(!instruction)throw new Error("Wave-2 task instruction required");const out=await Store.createAssignment({conversation_id:binding.conversation_id,instruction,budgets:m.budgets||{},boot_id:BOOT_ID});await maybeFault("after_delivery_persist",out.delivery,m.actor_id);return {ok:true,...out};}
   async function handleAcquire(m,s){
-    await deliveryForSender(m.delivery_id,s);
+    const current=await deliveryForSender(m.delivery_id,s);
+    const binding=await Store.getBindingByLocator(current.provider_locator);
+    const currentTask=await Store.getTask(current.task_id);
+    if(binding?.paused||currentTask?.manual_pause)throw Object.assign(new Error("Conversation is paused for explicit manual reconciliation"),{code:"wave2.conversation_paused"});
     const out=await Store.acquireLease({delivery_id:m.delivery_id,actor_id:m.actor_id,boot_id:BOOT_ID});
     const task=await Store.getTask(out.delivery.task_id);
     const budget=Core.budgetDecision(task||{},Date.now(),{forContinuation:false});
