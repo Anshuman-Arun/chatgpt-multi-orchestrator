@@ -15,7 +15,18 @@
   async function handleBind(m,s){const locator=durable(Config.pageId(m.provider_locator||senderLocator(s)));requireRoute(s,locator);const out=await Store.bindConversation({provider_locator:locator,actor_id:m.actor_id,boot_id:BOOT_ID});return {ok:true,...out,boot_id:BOOT_ID};}
   async function handleStatus(_m,s){const locator=durable(senderLocator(s));return {ok:true,...await Store.getStatusByLocator(locator),boot_id:BOOT_ID};}
   async function handleCreate(m,s){const {locator,binding}=await bindingForSender(s);if(!binding||binding.conversation_id!==m.conversation_id)throw new Error("Bind this conversation first");requireRoute(s,locator);const instruction=String(m.instruction||"").trim();if(!instruction)throw new Error("Wave-2 task instruction required");const out=await Store.createAssignment({conversation_id:binding.conversation_id,instruction,budgets:m.budgets||{},boot_id:BOOT_ID});await maybeFault("after_delivery_persist",out.delivery,m.actor_id);return {ok:true,...out};}
-  async function handleAcquire(m,s){await deliveryForSender(m.delivery_id,s);const out=await Store.acquireLease({delivery_id:m.delivery_id,actor_id:m.actor_id,boot_id:BOOT_ID});return {ok:true,...out};}
+  async function handleAcquire(m,s){
+    await deliveryForSender(m.delivery_id,s);
+    const out=await Store.acquireLease({delivery_id:m.delivery_id,actor_id:m.actor_id,boot_id:BOOT_ID});
+    const task=await Store.getTask(out.delivery.task_id);
+    const budget=Core.budgetDecision(task||{},Date.now(),{forContinuation:false});
+    if(!budget.ok&&Core.PRE_SEND_STATES.has(out.delivery.state)){
+      const stopped=await Store.failPreSend({delivery_id:out.delivery.delivery_id,actor_id:m.actor_id,fence:out.lease.fence,reason:"BUDGET_EXHAUSTED_BEFORE_SEND",boot_id:BOOT_ID,evidence:{dimension:budget.dimension}});
+      const esc=await Store.emitBudgetEscalation({task_id:out.delivery.task_id,boot_id:BOOT_ID,dimension:budget.dimension});
+      return {ok:true,...out,delivery:stopped,terminal:true,controller_escalation:esc.event};
+    }
+    return {ok:true,...out};
+  }
   async function handleBeginFill(m,s){const d=await deliveryForSender(m.delivery_id,s), snap=m.snapshot||{};if(snap.route_identity!==d.provider_locator)throw new Error("Wave-2 baseline route mismatch");if(!snap.composer_present)throw Object.assign(new Error("Composer unavailable"),{code:"wave2.ui_unrecognized"});if(Core.canonicalText(snap.composer_text))throw Object.assign(new Error("Composer contains user content"),{code:"wave2.composer_busy"});if(snap.generating)throw Object.assign(new Error("Generation active"),{code:"wave2.generation_active"});const ui=Core.normalizeUiState(snap);if(ui!=="IDLE")throw Object.assign(new Error(`UI not send-safe (${ui})`),{code:"wave2.ui_not_idle"});const turns=Array.isArray(snap.turns)?snap.turns:[], tail=turns.at(-1)||null;const baseline={route_identity:snap.route_identity,user_keys:turns.filter(t=>t.role==="user").map(t=>t.identity_key),assistant_keys:turns.filter(t=>t.role==="assistant").map(t=>t.identity_key),tail_key:String(tail?.identity_key||""),tail_fingerprint:String(tail?.fingerprint||""),tail_text:String(tail?.text||"")};const next=await Store.beginComposerFilling({delivery_id:d.delivery_id,actor_id:m.actor_id,fence:m.fence,baseline,boot_id:BOOT_ID});return {ok:true,delivery:next};}
   async function handleFilled(m,s){const d=await deliveryForSender(m.delivery_id,s), snap=m.snapshot||{};if(snap.route_identity!==d.provider_locator)throw new Error("Route changed while filling composer");const exact=Core.canonicalText(snap.composer_text);if(exact!==Core.canonicalText(d.payload))throw Object.assign(new Error("Exact composer readback failed"),{code:"wave2.composer_mismatch"});const hash=await Core.sha256Hex(exact);if(hash!==d.payload_exact_hash)throw new Error("Exact composer hash mismatch");if(d.baseline?.tail_key&&Core.resolveTurnAnchor&&!Core.resolveTurnAnchor(snap,d.baseline.tail_key,d.baseline.tail_fingerprint,d.baseline.tail_text))throw Object.assign(new Error("Baseline anchor missing"),{code:"wave2.baseline_anchor_missing"});if(newUserTurns(d,snap).length)throw Object.assign(new Error("Foreign user turn appeared before Send"),{code:"wave2.foreign_user_turn"});const next=await Store.markComposerFilled({delivery_id:d.delivery_id,actor_id:m.actor_id,fence:m.fence,boot_id:BOOT_ID,evidence:{composer_hash:hash}});await maybeFault("after_composer_write",next,m.actor_id);return {ok:true,delivery:next};}
   async function handleAuthorize(m,s){const d=await deliveryForSender(m.delivery_id,s);const out=await Store.authorizeSend({delivery_id:d.delivery_id,actor_id:m.actor_id,fence:m.fence,boot_id:BOOT_ID});await maybeFault("after_submitting_commit",out.delivery,m.actor_id);return {ok:true,...out};}
@@ -65,9 +76,13 @@
     d=await Store.getDelivery(d.delivery_id);
     const taskBudget=await Store.getTask(d.task_id);
     const runtimeBudget=Core.budgetDecision(taskBudget||{},Date.now(),{forContinuation:false});
-    if(!runtimeBudget.ok){const esc=await Store.emitBudgetEscalation({task_id:d.task_id,boot_id:BOOT_ID,dimension:runtimeBudget.dimension});return {ok:true,delivery:d,terminal:true,task_terminal:true,controller_escalation:esc.event};}
+    let runtimeBudgetEscalation=null;
+    if(!runtimeBudget.ok){
+      runtimeBudgetEscalation=(await Store.emitBudgetEscalation({task_id:d.task_id,boot_id:BOOT_ID,dimension:runtimeBudget.dimension})).event;
+      if(Core.PRE_SEND_STATES.has(d.state))return {ok:true,delivery:d,terminal:true,task_terminal:true,controller_escalation:runtimeBudgetEscalation};
+    }
     const ui=Core.normalizeUiState(snap,m.transport||{});
-    if(ui==="AUTHENTICATION_REQUIRED"||ui==="UNRECOGNIZED_UI"||ui==="CONTENT_SCRIPT_DETACHED"||ui==="TAB_UNAVAILABLE"){
+    if(ui==="AUTHENTICATION_REQUIRED"||ui==="USER_REQUIRED"||ui==="RATE_LIMITED"||ui==="UNRECOGNIZED_UI"||ui==="CONTENT_SCRIPT_DETACHED"||ui==="TAB_UNAVAILABLE"){
       await Store.recordEvent({event_type:"LANE_BLOCKED_UI",reason:ui,delivery_id:d.delivery_id,actor_id:actor,boot_id:BOOT_ID});return {ok:true,delivery:d,terminal:false,blocked:true,ui_state:ui};
     }
     if(ui==="CONNECTION_WAITING"||ui==="RETRYABLE_MODEL_ERROR"){
