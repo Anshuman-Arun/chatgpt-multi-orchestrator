@@ -21,7 +21,10 @@
     "command-runtime.js",
     "wave1-core.js",
     "wave1-dom.js",
-    "wave1-content.js"
+    "wave1-content.js",
+    "wave2-core.js",
+    "wave2-dom.js",
+    "wave2-content.js"
   ]);
   const lastInjectionAt = new Map();
 
@@ -48,8 +51,9 @@
   async function sendHealth(tabId) {
     const legacyHealth = await sendTabMessage(tabId, { type: "YOLOTAB_HEALTH_CHECK" });
     const wave1Health = await sendTabMessage(tabId, { type: "WAVE1_CONTENT_HEALTH" });
-    if (!legacyHealth?.ok || !wave1Health?.ok) return null;
-    return { ok: true, legacyHealth, wave1Health };
+    const wave2Health = await sendTabMessage(tabId, { type: "WAVE2_CONTENT_HEALTH" });
+    if (!legacyHealth?.ok || !wave1Health?.ok || !wave2Health?.ok) return null;
+    return { ok: true, legacyHealth, wave1Health, wave2Health };
   }
 
   const injectScripts = (tabId) => new Promise((resolve) => {
