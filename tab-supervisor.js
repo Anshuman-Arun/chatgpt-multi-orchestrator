@@ -13,11 +13,18 @@
     "config.js",
     "lifecycle.js",
     "platforms.js",
+    "shared.js",
     "commands.js",
     "command-ui.js",
     "content-state.js",
     "content.js",
-    "command-runtime.js"
+    "command-runtime.js",
+    "wave1-core.js",
+    "wave1-dom.js",
+    "wave1-content.js",
+    "wave2-core.js",
+    "wave2-dom.js",
+    "wave2-content.js"
   ]);
   const lastInjectionAt = new Map();
 
@@ -35,11 +42,19 @@
     chrome.tabs.update(tabId, updateProperties, (tab) => resolve(chrome.runtime.lastError ? null : tab || null));
   });
 
-  const sendHealth = (tabId) => new Promise((resolve) => {
-    chrome.tabs.sendMessage(tabId, { type: "YOLOTAB_HEALTH_CHECK" }, (response) => {
+  const sendTabMessage = (tabId, message) => new Promise((resolve) => {
+    chrome.tabs.sendMessage(tabId, message, (response) => {
       resolve(chrome.runtime.lastError ? null : response || null);
     });
   });
+
+  async function sendHealth(tabId) {
+    const legacyHealth = await sendTabMessage(tabId, { type: "YOLOTAB_HEALTH_CHECK" });
+    const wave1Health = await sendTabMessage(tabId, { type: "WAVE1_CONTENT_HEALTH" });
+    const wave2Health = await sendTabMessage(tabId, { type: "WAVE2_CONTENT_HEALTH" });
+    if (!legacyHealth?.ok || !wave1Health?.ok || !wave2Health?.ok) return null;
+    return { ok: true, legacyHealth, wave1Health, wave2Health };
+  }
 
   const injectScripts = (tabId) => new Promise((resolve) => {
     chrome.scripting.executeScript({ target: { tabId }, files: SCRIPT_FILES }, () => {

@@ -1,0 +1,121 @@
+((root, factory) => {
+  const Db = typeof module === "object" && module.exports ? require("./wave2-db.js") : root.MultiAgentWave2Db;
+  const api = factory(Db);
+  if (typeof module === "object" && module.exports) module.exports = api;
+  else root.MultiAgentWave2DeliveryStore = api;
+})(typeof globalThis !== "undefined" ? globalThis : this, (Db) => {
+  "use strict";
+  if(!Db)throw new Error("MultiAgentWave2Db is required");
+  const {Core,LEASE_MS,LEASE_RENEW_WINDOW_MS,now,makeId,req,withTx,os,appendEvent,readDelivery,transition,assertFence}=Db;
+  const NEW_DELIVERY_ALLOWED_AFTER=new Set(["ACKED","FAILED","RESPONSE_FAILED","RESPONSE_SUPERSEDED"]);
+  async function getBindingByLocator(locator){return withTx(["conversation_bindings"],"readonly",tx=>req(os(tx,"conversation_bindings").index("provider_locator").get(String(locator||""))));}
+  async function bindConversation({provider_locator,actor_id="",boot_id=""}){const locator=String(provider_locator||"");if(!locator)throw new Error("Provider conversation locator is required");return withTx(["conversation_bindings","meta","events"],"readwrite",async tx=>{const s=os(tx,"conversation_bindings"),existing=await req(s.index("provider_locator").get(locator));if(existing)return {binding:existing,created:false};const t=now(),binding={conversation_id:makeId("conversation"),provider:"chatgpt",provider_locator:locator,next_conversation_seq:1,paused:false,pause_reason:"",created_at:t,updated_at:t};s.put(binding);await appendEvent(tx,{event_type:"CONVERSATION_BOUND",conversation_id:binding.conversation_id,reason:"MANUAL_WAVE2_BIND",actor_id,boot_id,evidence:{provider_locator_fingerprint:Core.fingerprint(locator)}});return {binding,created:true};});}
+  async function createAssignment({conversation_id,instruction,budgets={},boot_id=""}){
+    const cid=String(conversation_id||""), taskInstruction=String(instruction||"").trim();
+    if(!taskInstruction)throw new Error("Task instruction is required");
+    const initial=await withTx(["conversation_bindings"],"readonly",tx=>req(os(tx,"conversation_bindings").get(cid)));
+    if(!initial)throw new Error("Wave-2 conversation binding not found");
+    if(initial.paused)throw Object.assign(new Error("Conversation paused: "+(initial.pause_reason||"manual reconciliation required")),{code:"wave2.conversation_paused"});
+    const run_id=makeId("run"),task_id=makeId("task"),logical_agent_id=makeId("agent"),slot_id=makeId("slot"),delivery_id=makeId("delivery"),ownership_token=makeId("ownership"),conversation_seq=Number(initial.next_conversation_seq)||1;
+    const context={run_id,task_id,logical_agent_id,slot_id,conversation_id:cid,delivery_id,conversation_seq,ownership_token,kind:"ASSIGNMENT"};
+    const payload=Core.buildRouterPayload({...context,instruction:taskInstruction});
+    const payload_hash=await Core.sha256Hex(Core.normalizeText(payload));
+    const payload_exact_hash=await Core.sha256Hex(Core.canonicalText(payload));
+    return withTx(["conversation_bindings","runs","tasks","deliveries","meta","events"],"readwrite",async tx=>{
+      const bindings=os(tx,"conversation_bindings"),b=await req(bindings.get(cid));
+      if(!b)throw new Error("Wave-2 conversation binding disappeared");
+      if(b.paused)throw Object.assign(new Error("Conversation paused: "+(b.pause_reason||"manual reconciliation required")),{code:"wave2.conversation_paused"});
+      if((Number(b.next_conversation_seq)||1)!==conversation_seq)throw Object.assign(new Error("Conversation sequence changed; create the assignment again"),{code:"wave2.sequence_changed"});
+      const prior=await req(os(tx,"deliveries").index("conversation_id").getAll(cid)),blocking=prior.find(d=>!NEW_DELIVERY_ALLOWED_AFTER.has(d.state));
+      if(blocking)throw Object.assign(new Error("Conversation already has unresolved Delivery "+blocking.delivery_id+" ("+blocking.state+")"),{code:"wave2.delivery_inflight"});
+      const t=now();
+      const delivery={...context,provider_locator:b.provider_locator,protocol_version:Core.PROTOCOL_VERSION,payload,payload_hash,payload_exact_hash,state:"PENDING",causal_parent_delivery_id:"",repair_of_delivery_id:"",retry_of_delivery_id:"",actor_id:"",lease_fence:0,baseline:null,send_authorization_id:"",send_consumed_at:0,user_receipt:null,assistant_candidate:null,assistant_text_hash:"",assistant_last_changed_at:0,terminal_error:"",created_at:t,updated_at:t};
+      const maxContinuations=budgets.max_continuation_turns??budgets.max_continuations??3;
+      const task={task_id,run_id,logical_agent_id,slot_id,conversation_id:cid,status:"RUNNING",started_at:t,created_at:t,updated_at:t,max_continuations:Math.max(0,Number(maxContinuations)),max_recoverable_failures:Math.max(0,Number(budgets.max_recoverable_failures??2)),max_elapsed_ms:Math.max(1,Number(budgets.max_elapsed_ms??1800000)),max_protocol_repairs:Math.max(0,Number(budgets.max_protocol_repairs??1)),continuation_count:0,recoverable_failure_count:0,protocol_repair_attempts:0,last_delivery_id:delivery_id,manual_pause:false};
+      os(tx,"runs").put({run_id,status:"RUNNING",created_at:t,updated_at:t});os(tx,"tasks").put(task);os(tx,"deliveries").put(delivery);
+      b.next_conversation_seq=conversation_seq+1;b.updated_at=t;bindings.put(b);
+      await appendEvent(tx,{delivery,next_state:"PENDING",reason:"DELIVERY_CREATED",boot_id,evidence:{kind:"ASSIGNMENT",conversation_seq,payload_hash,payload_exact_hash}});
+      return {delivery,task};
+    });
+  }
+
+  async function createChildDelivery({parent_delivery_id,kind,instruction,boot_id=""}){
+    if(!["CONTINUATION","PROTOCOL_REPAIR","FOLLOW_UP"].includes(kind))throw new Error("Unsupported child Delivery kind");
+    const prepared=await withTx(["deliveries","tasks","conversation_bindings"],"readonly",async tx=>{
+      const parent=await readDelivery(tx,parent_delivery_id),task=await req(os(tx,"tasks").get(parent.task_id)),binding=await req(os(tx,"conversation_bindings").get(parent.conversation_id));
+      if(!task||!binding)throw new Error("Wave-2 child context not found");
+      return {parent,task,binding};
+    });
+    if(prepared.binding.paused||prepared.task.manual_pause)throw Object.assign(new Error("Conversation is paused for reconciliation"),{code:"wave2.conversation_paused"});
+    const delivery_id=makeId("delivery"),ownership_token=makeId("ownership"),conversation_seq=Number(prepared.binding.next_conversation_seq)||1;
+    const ctx={run_id:prepared.parent.run_id,task_id:prepared.parent.task_id,logical_agent_id:prepared.parent.logical_agent_id,slot_id:prepared.parent.slot_id,conversation_id:prepared.parent.conversation_id,delivery_id,conversation_seq,ownership_token,kind,causal_parent_delivery_id:prepared.parent.delivery_id};
+    const payload=Core.buildRouterPayload({...ctx,instruction:String(instruction||"").trim()});
+    const payload_hash=await Core.sha256Hex(Core.normalizeText(payload));
+    const payload_exact_hash=await Core.sha256Hex(Core.canonicalText(payload));
+    return withTx(["conversation_bindings","tasks","deliveries","meta","events"],"readwrite",async tx=>{
+      let parent=await readDelivery(tx,parent_delivery_id);
+      const task=await req(os(tx,"tasks").get(parent.task_id));if(!task)throw new Error("Wave-2 task not found");
+      const b=await req(os(tx,"conversation_bindings").get(parent.conversation_id));if(!b||b.paused||task.manual_pause)throw Object.assign(new Error("Conversation is paused for reconciliation"),{code:"wave2.conversation_paused"});
+      const all=await req(os(tx,"deliveries").index("conversation_id").getAll(parent.conversation_id));
+      const existingChild=all.find(d=>d.causal_parent_delivery_id===parent.delivery_id&&d.kind===kind);
+      if(existingChild)return {delivery:existingChild,task,already_exists:true};
+      const blocking=all.find(d=>d.delivery_id!==parent.delivery_id&&!NEW_DELIVERY_ALLOWED_AFTER.has(d.state));
+      if(blocking)throw Object.assign(new Error("Conversation already has unresolved Delivery "+blocking.delivery_id),{code:"wave2.delivery_inflight"});
+      if(kind==="PROTOCOL_REPAIR"&&parent.state!=="RESPONSE_RECEIVED")throw new Error("Protocol repair parent is not RESPONSE_RECEIVED");
+      if(kind!=="PROTOCOL_REPAIR"&&parent.state!=="ACKED")throw new Error("Child Delivery parent is not ACKED");
+      if(kind==="CONTINUATION"){const bd=Core.budgetDecision(task,now());if(!bd.ok)return {budget_exhausted:true,budget:bd,task,parent};}
+      if(kind==="PROTOCOL_REPAIR"&&Number(task.protocol_repair_attempts)>=Number(task.max_protocol_repairs))return {repair_exhausted:true,task,parent};
+      if((Number(b.next_conversation_seq)||1)!==conversation_seq)throw Object.assign(new Error("Conversation sequence changed; materialize child again"),{code:"wave2.sequence_changed"});
+      const t=now();
+      const d={...ctx,provider_locator:b.provider_locator,protocol_version:Core.PROTOCOL_VERSION,payload,payload_hash,payload_exact_hash,state:"PENDING",repair_of_delivery_id:kind==="PROTOCOL_REPAIR"?parent.delivery_id:"",retry_of_delivery_id:"",actor_id:"",lease_fence:0,baseline:null,send_authorization_id:"",send_consumed_at:0,user_receipt:null,assistant_candidate:null,assistant_text_hash:"",assistant_last_changed_at:0,terminal_error:"",created_at:t,updated_at:t};
+      if(kind==="PROTOCOL_REPAIR"){
+        const prior=parent.state;parent=transition(parent,"RESPONSE_SUPERSEDED",t);parent.superseded_reason="PROTOCOL_REPAIR_ISSUED";parent.protocol_repair_child_id=d.delivery_id;os(tx,"deliveries").put(parent);
+        await appendEvent(tx,{delivery:parent,previous_state:prior,next_state:"RESPONSE_SUPERSEDED",event_type:"PROTOCOL_REPAIR_PARENT_CLOSED",reason:"MALFORMED_PROTOCOL_PRESERVED_REPAIR_SCHEDULED",boot_id,evidence:{repair_delivery_id:d.delivery_id,response_text_hash:parent.response_text_hash||""}});
+      }
+      os(tx,"deliveries").put(d);b.next_conversation_seq=conversation_seq+1;b.updated_at=t;os(tx,"conversation_bindings").put(b);
+      task.last_delivery_id=d.delivery_id;task.updated_at=t;if(kind==="CONTINUATION")task.continuation_count=Number(task.continuation_count||0)+1;if(kind==="PROTOCOL_REPAIR")task.protocol_repair_attempts=Number(task.protocol_repair_attempts||0)+1;os(tx,"tasks").put(task);
+      await appendEvent(tx,{delivery:d,next_state:"PENDING",event_type:kind==="CONTINUATION"?"CONTINUATION_CREATED":kind==="PROTOCOL_REPAIR"?"PROTOCOL_REPAIR_CREATED":"FOLLOW_UP_CREATED",reason:"CHILD_DELIVERY_CREATED",boot_id,evidence:{parent_delivery_id:parent.delivery_id,kind,conversation_seq,payload_hash,payload_exact_hash}});
+      return {delivery:d,task};
+    });
+  }
+
+  async function acquireLease({delivery_id,actor_id,boot_id="",lease_ms=LEASE_MS}){
+    const actor=String(actor_id||"");if(!actor)throw new Error("Wave-2 actor ID required");
+    return withTx(["deliveries","leases","meta","events"],"readwrite",async tx=>{
+      const t=now();let d=await readDelivery(tx,delivery_id);const leases=os(tx,"leases"),existing=await req(leases.get(d.conversation_id));
+      const same=existing&&existing.owner_actor_id===actor&&Number(existing.expires_at)>t;
+      if(same){
+        const previous=d.state,fence=Number(existing.fence);
+        if(d.state==="PENDING")d=transition(d,"CLAIMED",t);
+        const adopted=String(d.actor_id||"")!==actor||Number(d.lease_fence)!==fence||d.state!==previous;
+        if(adopted){
+          d.actor_id=actor;d.lease_fence=fence;d.updated_at=t;os(tx,"deliveries").put(d);
+          await appendEvent(tx,{delivery:d,previous_state:previous,next_state:d.state,event_type:"LEASE_REUSED",reason:Core.POST_BOUNDARY_STATES.has(d.state)?"RECONCILIATION_AUTHORITY":"SENDER_AUTHORITY",actor_id:actor,boot_id,lease_fence:fence,evidence:{lease_expires_at:existing.expires_at}});
+        }
+        return {delivery:d,lease:existing,reconciliation_only:Core.POST_BOUNDARY_STATES.has(d.state),taken_over:false,reused:true};
+      }
+      if(existing&&existing.owner_actor_id!==actor&&Number(existing.expires_at)>t&&d.state==="SUBMITTING"&&d.send_consumed_at){
+        const e=new Error("Prior actor holds a still-valid consumed Send capability; takeover deferred until permit expiry");e.code="wave2.lease_handoff_deferred";e.retry_at=Number(existing.expires_at);throw e;
+      }
+      const fence=Math.max(0,Number(existing?.fence)||0)+1,lease={conversation_id:d.conversation_id,owner_actor_id:actor,fence,expires_at:t+Math.max(30000,Number(lease_ms)||LEASE_MS),updated_at:t};
+      leases.put(lease);const previous=d.state;if(d.state==="PENDING")d=transition(d,"CLAIMED",t);d.actor_id=actor;d.lease_fence=fence;d.updated_at=t;os(tx,"deliveries").put(d);
+      await appendEvent(tx,{delivery:d,previous_state:previous,next_state:d.state,event_type:existing?"LEASE_TAKEN_OVER":"LEASE_ACQUIRED",reason:Core.POST_BOUNDARY_STATES.has(d.state)?"RECONCILIATION_AUTHORITY":"SENDER_AUTHORITY",actor_id:actor,boot_id,lease_fence:fence,evidence:{prior_actor:existing?.owner_actor_id||"",lease_expires_at:lease.expires_at}});
+      return {delivery:d,lease,reconciliation_only:Core.POST_BOUNDARY_STATES.has(d.state),taken_over:Boolean(existing),reused:false};
+    });
+  }
+
+  async function renewLease({delivery_id,actor_id,fence,boot_id=""}){return withTx(["deliveries","leases","meta","events"],"readwrite",async tx=>{const t=now(),d=await readDelivery(tx,delivery_id),l=await assertFence(tx,d,actor_id,fence,{fresh:false,at:t});if(Number(l.expires_at)<=t){if(Core.POST_BOUNDARY_STATES.has(d.state))return {delivery:d,lease:l,renewed:false,reconciliation_only:true};const e=new Error("Wave-2 lease expired before ambiguity boundary");e.code="wave2.lease_expired";throw e;}if(Number(l.expires_at)-t>LEASE_RENEW_WINDOW_MS)return {delivery:d,lease:l,renewed:false,reconciliation_only:Core.POST_BOUNDARY_STATES.has(d.state)};l.expires_at=t+LEASE_MS;l.updated_at=t;os(tx,"leases").put(l);await appendEvent(tx,{delivery:d,previous_state:d.state,next_state:d.state,event_type:"LEASE_RENEWED",reason:"ACTIVE_RECONCILIATION",actor_id,boot_id,lease_fence:fence,evidence:{lease_expires_at:l.expires_at}});return {delivery:d,lease:l,renewed:true,reconciliation_only:Core.POST_BOUNDARY_STATES.has(d.state)};});}
+  async function transitionWithFence({delivery_id,actor_id,fence,expected,next,reason,event_type="STATE_TRANSITION",boot_id="",evidence={},fresh=true,mutate=null}){return withTx(["deliveries","leases","meta","events"],"readwrite",async tx=>{const t=now();let d=await readDelivery(tx,delivery_id);if(d.state!==expected)throw new Error(`Wave-2 Delivery is ${d.state}, expected ${expected}`);await assertFence(tx,d,actor_id,fence,{fresh,at:t});const prev=d.state;d=transition(d,next,t);if(mutate)d=mutate(d,t)||d;os(tx,"deliveries").put(d);await appendEvent(tx,{delivery:d,previous_state:prev,next_state:next,event_type,reason,actor_id,boot_id,lease_fence:fence,evidence});return d;});}
+  const beginComposerFilling=a=>transitionWithFence({...a,expected:"CLAIMED",next:"COMPOSER_FILLING",reason:"BASELINE_CAPTURED_COMPOSER_EMPTY",mutate:d=>({...d,baseline:a.baseline})});
+  const markComposerFilled=a=>transitionWithFence({...a,expected:"COMPOSER_FILLING",next:"COMPOSER_FILLED",reason:"COMPOSER_EXACT_READBACK_VERIFIED"});
+  async function failPreSend({delivery_id,actor_id,fence,reason="PRE_SEND_FAILURE",boot_id="",evidence={}}){return withTx(["deliveries","leases","tasks","runs","meta","events"],"readwrite",async tx=>{const t=now();let d=await readDelivery(tx,delivery_id);if(!Core.PRE_SEND_STATES.has(d.state))throw new Error(`Cannot fail pre-send from ${d.state}`);if(d.state!=="PENDING")await assertFence(tx,d,actor_id,fence,{fresh:false,at:t});const prev=d.state;d=transition(d,"FAILED",t);d.failure_reason=String(reason).slice(0,240);os(tx,"deliveries").put(d);const task=await req(os(tx,"tasks").get(d.task_id));if(task){task.status="FAILED";task.updated_at=t;os(tx,"tasks").put(task);}const run=await req(os(tx,"runs").get(d.run_id));if(run){run.status="FAILED";run.updated_at=t;os(tx,"runs").put(run);}await appendEvent(tx,{delivery:d,previous_state:prev,next_state:"FAILED",reason:d.failure_reason,actor_id,boot_id,lease_fence:fence,evidence});return d;});}
+  async function authorizeSend(a){const auth=makeId("sendauth"),delivery=await transitionWithFence({...a,expected:"COMPOSER_FILLED",next:"SUBMITTING",reason:"DURABLE_SEND_AUTHORIZATION",mutate:(d,t)=>({...d,send_authorization_id:auth,send_authorized_at:t,send_consumed_at:0})});return {delivery,authorization_id:auth};}
+  async function consumeSendAuthorization({delivery_id,actor_id,fence,authorization_id,boot_id=""}){return withTx(["deliveries","leases","meta","events"],"readwrite",async tx=>{const t=now(),d=await readDelivery(tx,delivery_id),lease=await assertFence(tx,d,actor_id,fence,{fresh:true,at:t});if(d.state!=="SUBMITTING")throw new Error(`Send impossible from ${d.state}`);if(d.send_authorization_id!==authorization_id||!authorization_id)throw new Error("Wave-2 Send authorization mismatch");if(d.send_consumed_at)throw Object.assign(new Error("Wave-2 Send capability already consumed"),{code:"wave2.send_already_consumed"});d.send_consumed_at=t;d.updated_at=t;os(tx,"deliveries").put(d);await appendEvent(tx,{delivery:d,previous_state:"SUBMITTING",next_state:"SUBMITTING",event_type:"SEND_CAPABILITY_CONSUMED",reason:"ONE_SHOT_SEND_CAPABILITY_CONSUMED",actor_id,boot_id,lease_fence:fence});return {delivery:d,permit:{kind:"wave1-durable-submitting",delivery_id:d.delivery_id,conversation_id:d.conversation_id,provider_locator:d.provider_locator,lease_fence:Number(fence),lease_expires_at:Number(lease.expires_at),authorization_id,consumed_at:t}};});}
+  const markSentUnconfirmed=a=>transitionWithFence({...a,expected:"SUBMITTING",next:"SENT_UNCONFIRMED",reason:"SEND_INVOKED_RECEIPT_PENDING",fresh:false,mutate:d=>{if(!d.send_consumed_at)throw new Error("Send capability not consumed");return d;}});
+  const markDelivered=a=>transitionWithFence({...a,expected:a.expected||"SENT_UNCONFIRMED",next:"DELIVERED",reason:"EXACT_OWNED_USER_TURN_CONFIRMED",fresh:false,mutate:(d,t)=>({...d,user_receipt:a.receipt,delivered_at:t})});
+  const markResponseStarted=a=>transitionWithFence({...a,expected:"DELIVERED",next:"RESPONSE_STARTED",reason:"CAUSAL_ASSISTANT_CANDIDATE_IDENTIFIED",fresh:false,mutate:(d,t)=>({...d,assistant_candidate:a.candidate,assistant_text_hash:a.text_hash,assistant_last_changed_at:t})});
+  async function recordAssistantMutation({delivery_id,actor_id,fence,candidate,text_hash,boot_id=""}){return withTx(["deliveries","leases","meta","events"],"readwrite",async tx=>{const t=now(),d=await readDelivery(tx,delivery_id);if(d.state!=="RESPONSE_STARTED")return d;await assertFence(tx,d,actor_id,fence,{fresh:false,at:t});if(d.assistant_text_hash===text_hash&&String(d.assistant_candidate?.identity_key||"")===String(candidate?.identity_key||""))return d;d.assistant_candidate=candidate;d.assistant_text_hash=text_hash;d.assistant_last_changed_at=t;d.updated_at=t;os(tx,"deliveries").put(d);await appendEvent(tx,{delivery:d,previous_state:"RESPONSE_STARTED",next_state:"RESPONSE_STARTED",event_type:"ASSISTANT_MUTATED",reason:"ASSISTANT_OUTPUT_CHANGED",actor_id,boot_id,lease_fence:fence});return d;});}
+  const markResponseReceived=a=>transitionWithFence({...a,expected:"RESPONSE_STARTED",next:"RESPONSE_RECEIVED",reason:"TURN_COMPLETE_MULTI_SIGNAL",fresh:false,mutate:(d,t)=>({...d,response_text:String(a.response_text||""),response_text_hash:String(a.response_text_hash||""),response_received_at:t})});
+  async function markUnknown({delivery_id,actor_id,fence,reason="DELIVERY_RECEIPT_UNRESOLVED",boot_id="",evidence={}}){return withTx(["deliveries","leases","tasks","runs","meta","events"],"readwrite",async tx=>{const t=now();let d=await readDelivery(tx,delivery_id);if(d.state==="DELIVERY_UNKNOWN")return d;if(!["SUBMITTING","SENT_UNCONFIRMED"].includes(d.state))throw new Error(`Cannot mark unknown from ${d.state}`);await assertFence(tx,d,actor_id,fence,{fresh:false,at:t});const prev=d.state;d=transition(d,"DELIVERY_UNKNOWN",t);d.unknown_reason=reason;os(tx,"deliveries").put(d);const task=await req(os(tx,"tasks").get(d.task_id));if(task){task.status="BLOCKED";task.updated_at=t;os(tx,"tasks").put(task);}const run=await req(os(tx,"runs").get(d.run_id));if(run){run.status="BLOCKED";run.updated_at=t;os(tx,"runs").put(run);}await appendEvent(tx,{delivery:d,previous_state:prev,next_state:"DELIVERY_UNKNOWN",reason,actor_id,boot_id,lease_fence:fence,evidence});return d;});}
+  return Object.freeze({getBindingByLocator,bindConversation,createAssignment,createChildDelivery,acquireLease,renewLease,beginComposerFilling,markComposerFilled,failPreSend,authorizeSend,consumeSendAuthorization,markSentUnconfirmed,markDelivered,markResponseStarted,recordAssistantMutation,markResponseReceived,markUnknown});
+});

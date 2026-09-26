@@ -34,7 +34,13 @@ test("content scripts load shared configuration before the engine", () => {
     "command-ui.js",
     "content-state.js",
     "content.js",
-    "command-runtime.js"
+    "command-runtime.js",
+    "wave1-core.js",
+    "wave1-dom.js",
+    "wave1-content.js",
+    "wave2-core.js",
+    "wave2-dom.js",
+    "wave2-content.js"
   ]);
 });
 
