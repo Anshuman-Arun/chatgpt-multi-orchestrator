@@ -79,9 +79,18 @@
   async function resume(){const status=await runtimeSend({type:"WAVE2_STATUS"});if(!status?.binding||!status?.task){setStatus("No paused task to resume.","error");return;}const r=await runtimeSend({type:"WAVE2_RESUME_MANUAL",conversation_id:status.binding.conversation_id,task_id:status.task.task_id,actor_id:actorId});if(!r.ok){setStatus(compact(r),"error");return;}setStatus("Manual pause cleared after explicit reconciliation. No prior Delivery is resent automatically.","success");if(status.delivery&&!Core.TERMINAL_DELIVERY_STATES.has(status.delivery.state))await recoverDelivery(status.delivery.delivery_id);}
   async function journal(){const status=await runtimeSend({type:"WAVE2_STATUS"});if(!status?.delivery){setStatus("No Delivery exists.","error");return;}const r=await runtimeSend({type:"WAVE2_JOURNAL",delivery_id:status.delivery.delivery_id});setStatus(r.ok?`journal events: ${r.events.length}\n${r.events.map(e=>`${e.seq} ${e.event_type} ${e.previous_state??""}->${e.next_state??""}`).join("\n")}`:compact(r),r.ok?"success":"error");}
   async function recoverCurrent(){const status=await runtimeSend({type:"WAVE2_STATUS"});if(!status?.ok||!status.delivery)return;if(status.binding?.paused||status.task?.manual_pause){setStatus(`Automation remains paused after restart: ${status.binding?.pause_reason||"manual reconciliation required"}. Press Resume only after reconciling the conversation.`,"error");return;}if(!Core.TERMINAL_DELIVERY_STATES.has(status.delivery.state))await recoverDelivery(status.delivery.delivery_id);}
+  async function exportEvidence(){
+    const r=await runtimeSend({type:"WAVE2_EXPORT_EVIDENCE",actor_id:actorId});if(!r?.ok)return r;
+    const snap=Dom.snapshot(),deliveries=Array.isArray(r.evidence?.deliveries)?r.evidence.deliveries:[],byHash=new Map(deliveries.filter(d=>d.payload_exact_hash).map(d=>[String(d.payload_exact_hash),d.delivery_id])),counts=Object.fromEntries(deliveries.map(d=>[d.delivery_id,0]));
+    let matched=0,unmatched=0;
+    for(const t of (Array.isArray(snap.turns)?snap.turns:[])){if(t.role!=="user")continue;const h=await Core.sha256Hex(Core.canonicalText(t.text||"")),id=byHash.get(h);if(id){counts[id]=Number(counts[id]||0)+1;matched++;}else unmatched++;}
+    const composer=Core.canonicalText(snap.composer_text||"");
+    return {ok:true,evidence:{...r.evidence,live:{actor_id:actorId,route_identity:snap.route_identity||"",ui_state:snap.ui_state||Core.normalizeUiState(snap),generating:Boolean(snap.generating),composer_present:Boolean(snap.composer_present),composer_empty:!composer,composer_hash:composer?await Core.sha256Hex(composer):"",snapshot_turn_count:Array.isArray(snap.turns)?snap.turns.length:0,user_turn_count:Array.isArray(snap.turns)?snap.turns.filter(t=>t.role==="user").length:0,assistant_turn_count:Array.isArray(snap.turns)?snap.turns.filter(t=>t.role==="assistant").length:0,currently_visible_delivery_turn_counts:counts,matched_router_user_turns:matched,unmatched_user_turns:unmatched}}};
+  }
   globalThis.MultiAgentWave2Dev=Object.freeze({
     armFaults:(points)=>runtimeSend({type:"WAVE2_CONFIGURE_FAULTS",enabled:true,points:Array.isArray(points)?points:[],actor_id:actorId}),
-    clearFaults:()=>runtimeSend({type:"WAVE2_CONFIGURE_FAULTS",enabled:false,points:[],actor_id:actorId})
+    clearFaults:()=>runtimeSend({type:"WAVE2_CONFIGURE_FAULTS",enabled:false,points:[],actor_id:actorId}),
+    exportEvidence
   });
 
   chrome.runtime.onMessage.addListener((m,_s,reply)=>{if(m?.type==="WAVE2_CONTENT_HEALTH"){reply({ok:true,actor_id:actorId,route_identity:Dom.routeIdentity(),active_delivery_id:active?.delivery_id||""});return false;}if(m?.type==="WAVE2_READONLY_SNAPSHOT"){reply({ok:true,actor_id:actorId,route_identity:Dom.routeIdentity(),snapshot:Dom.snapshot()});return false;}if(m?.type==="WAVE2_RECOVER_DELIVERY"){recoverDelivery(m.delivery_id).then(ok=>reply({ok,actor_id:actorId})).catch(e=>reply({ok:false,reason:e.message}));return true;}return false;});
