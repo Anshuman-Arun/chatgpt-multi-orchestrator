@@ -69,8 +69,8 @@
       const t=now();
       const d={...ctx,provider_locator:b.provider_locator,protocol_version:Core.PROTOCOL_VERSION,payload,payload_hash,payload_exact_hash,state:"PENDING",repair_of_delivery_id:kind==="PROTOCOL_REPAIR"?parent.delivery_id:"",retry_of_delivery_id:"",actor_id:"",lease_fence:0,baseline:null,send_authorization_id:"",send_consumed_at:0,user_receipt:null,assistant_candidate:null,assistant_text_hash:"",assistant_last_changed_at:0,terminal_error:"",created_at:t,updated_at:t};
       if(kind==="PROTOCOL_REPAIR"){
-        const prior=parent.state;parent=transition(parent,"FAILED",t);parent.failure_reason="PROTOCOL_REPAIR_SCHEDULED";parent.protocol_repair_child_id=d.delivery_id;os(tx,"deliveries").put(parent);
-        await appendEvent(tx,{delivery:parent,previous_state:prior,next_state:"FAILED",event_type:"PROTOCOL_REPAIR_PARENT_CLOSED",reason:"MALFORMED_PROTOCOL_PRESERVED_REPAIR_SCHEDULED",boot_id,evidence:{repair_delivery_id:d.delivery_id,response_text_hash:parent.response_text_hash||""}});
+        const prior=parent.state;parent=transition(parent,"RESPONSE_SUPERSEDED",t);parent.superseded_reason="PROTOCOL_REPAIR_ISSUED";parent.protocol_repair_child_id=d.delivery_id;os(tx,"deliveries").put(parent);
+        await appendEvent(tx,{delivery:parent,previous_state:prior,next_state:"RESPONSE_SUPERSEDED",event_type:"PROTOCOL_REPAIR_PARENT_CLOSED",reason:"MALFORMED_PROTOCOL_PRESERVED_REPAIR_SCHEDULED",boot_id,evidence:{repair_delivery_id:d.delivery_id,response_text_hash:parent.response_text_hash||""}});
       }
       os(tx,"deliveries").put(d);b.next_conversation_seq=conversation_seq+1;b.updated_at=t;os(tx,"conversation_bindings").put(b);
       task.last_delivery_id=d.delivery_id;task.updated_at=t;if(kind==="CONTINUATION")task.continuation_count=Number(task.continuation_count||0)+1;if(kind==="PROTOCOL_REPAIR")task.protocol_repair_attempts=Number(task.protocol_repair_attempts||0)+1;os(tx,"tasks").put(task);
