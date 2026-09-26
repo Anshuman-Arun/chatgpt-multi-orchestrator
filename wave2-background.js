@@ -143,6 +143,32 @@
       if(!observed?.ok||!observed.snapshot){await Store.recordEvent({event_type:"RECOVERY_CONTENT_DETACHED",reason:"CONTENT_SCRIPT_DETACHED",delivery_id:d.delivery_id,boot_id:BOOT_ID,evidence:{tab_id:tab.id}});continue;}
       const snap=observed.snapshot;
       await Store.recordEvent({event_type:"RESTART_RECONCILIATION_OBSERVED",reason:String(snap.ui_state||Core.normalizeUiState(snap)||"READ_ONLY_SNAPSHOT"),delivery_id:d.delivery_id,boot_id:BOOT_ID,evidence:{tab_id:tab.id,route_fingerprint:Core.fingerprint(snap.route_identity||""),turns:Array.isArray(snap.turns)?snap.turns.length:0,composer_present:Boolean(snap.composer_present),generating:Boolean(snap.generating)}});
+      let exactReceipt=false,foreignUser=false,causalResponseComplete=d.state==="RESPONSE_RECEIVED";
+      if(["SUBMITTING","SENT_UNCONFIRMED"].includes(d.state)){
+        const receipt=await Core.findOwnedUserReceipt({delivery:d,baseline:d.baseline,snapshot:snap});
+        exactReceipt=Boolean(receipt?.ok);
+      }
+      if(d.baseline){
+        const windowUsers=newUserTurns(d,snap);
+        foreignUser=windowUsers.some(t=>Core.normalizeText(t.text)!==Core.normalizeText(d.payload));
+      }
+      if(d.state==="RESPONSE_STARTED"&&d.user_receipt){
+        const candidate=Core.selectAssistantCandidate({baseline:d.baseline,receipt:{turn:d.user_receipt},snapshot:snap,ownedUserText:d.payload,currentIdentity:d.assistant_candidate?.identity_key,currentIdentityKind:d.assistant_candidate?.identity_kind});
+        if(candidate){
+          const completion=Core.turnCompletionEvidence({delivered:true,candidate,snapshot:snap,last_changed_at:d.assistant_last_changed_at,now:Date.now()});
+          causalResponseComplete=Boolean(completion.complete);
+        }
+      }
+      const observation={
+        exact_owned_user_turn:exactReceipt,
+        exact_composer_payload:Core.canonicalText(snap.composer_text)===Core.canonicalText(d.payload),
+        composer_empty:!Core.canonicalText(snap.composer_text),
+        foreign_user_turn:foreignUser,
+        causal_response_complete:causalResponseComplete,
+        positive_non_delivery:d.state==="SUBMITTING"&&!d.send_consumed_at
+      };
+      const decision=Core.classifyReconciliation(d,observation);
+      await Store.recordEvent({event_type:"RESTART_RECONCILIATION_DECISION",reason:decision.action,delivery_id:d.delivery_id,boot_id:BOOT_ID,evidence:{exact_owned_user_turn:observation.exact_owned_user_turn,exact_composer_payload:observation.exact_composer_payload,composer_empty:observation.composer_empty,foreign_user_turn:observation.foreign_user_turn,causal_response_complete:observation.causal_response_complete,positive_non_delivery:observation.positive_non_delivery}});
       recoverable.push({tab,d});
     }
     recoveryReady=true;
