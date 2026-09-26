@@ -93,6 +93,21 @@ The stateful harness asserts execute → crash → reconstruct → reconcile sem
 
 `tests/wave2-production-contract.test.js` audits runtime wiring, DB v3 migration, one low-level Send actuator, split result persistence/ACK, real crash/reload wiring, protocol-repair parent closure, pre-send budget gating, blocking UI states, and packaging.
 
+## Controlled restart / DOM harness
+
+`tests/wave2-controlled-restart.test.js` supplements the compact X001–X012 state-machine harness with an explicit controlled durable-store/browser split. It serializes and reconstructs an IndexedDB-like store across fresh runtime actors and exercises:
+
+- crash after one-shot Send with browser receipt surviving runtime loss;
+- exact router composer recovery versus foreign/manual draft quarantine;
+- stale fencing after actor replacement;
+- assistant streaming across runtime restart without rerunning worker work;
+- worker-result persistence followed by post-restart ACK;
+- duplicate/dropped observer wakeups with later polling reconciliation;
+- manual user interference remaining paused after durable reconstruction;
+- consumed ambiguous `SUBMITTING` becoming immutable `DELIVERY_UNKNOWN`.
+
+This keeps the key test shape as **execute → crash/runtime loss → reconstruct durable state → inspect browser snapshot → reconcile**, rather than relying only on source assertions.
+
 ## Live evidence still required
 
 Automated coverage is necessary but not sufficient. `docs/WAVE2_COMPREHENSIVE_LIVE_TEST.md` defines the single authenticated campaign required before treating the Wave-2 browser gate as passed.
