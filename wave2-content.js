@@ -15,7 +15,7 @@
   function startPolling(){clearInterval(pollTimer);pollTimer=setInterval(()=>active&&scheduleReconcile(0),750);}
   async function faultPoint(point,deliveryId){const r=await runtimeSend({type:"WAVE2_FAULT_POINT",point,delivery_id:deliveryId||active?.delivery_id||"",actor_id:actorId});return r?.fault||null;}
   function crashIfFault(fault){if(fault?.action==="CRASH"){active=null;stopPolling();globalThis.location?.reload?.();const e=new Error(`Injected Wave-2 content crash at ${fault.point}`);e.code="wave2.injected_fault";throw e;}}
-  async function snapshotWithInjectedUi(){const snap=Dom.snapshot();const connection=await faultPoint("connection_interruption",active?.delivery_id);if(connection)snap.error_code="connection_waiting";const retry=await faultPoint("retry_error_state",active?.delivery_id);if(retry)snap.error_code="retryable_model_error";return snap;}
+  async function snapshotWithInjectedUi(initial=null){const snap=initial||Dom.snapshot();const connection=await faultPoint("connection_interruption",active?.delivery_id);if(connection)snap.error_code="connection_waiting";const retry=await faultPoint("retry_error_state",active?.delivery_id);if(retry)snap.error_code="retryable_model_error";return snap;}
   async function pauseManual(d,fence,reason,evidence={}){const r=await runtimeSend({type:"WAVE2_PAUSE_MANUAL",delivery_id:d.delivery_id,actor_id:actorId,fence,reason,evidence});active=null;stopPolling();setStatus(summary(r.delivery||d,"Automation paused; explicit reconciliation/resume is required."),"error");return r;}
   async function failPreSend(d,fence,reason,evidence={}){const r=await runtimeSend({type:"WAVE2_FAIL_PRE_SEND",delivery_id:d.delivery_id,actor_id:actorId,fence,reason,evidence});active=null;stopPolling();setStatus(summary(r.delivery||d,`Stopped before Send: ${reason}`),"error");return r;}
 
@@ -53,15 +53,19 @@
     const acquired=await runtimeSend({type:"WAVE2_ACQUIRE",delivery_id:deliveryId,actor_id:actorId});
     if(!acquired.ok){if(acquired.code==="wave2.lease_handoff_deferred"){setStatus(`Recovery deferred until the prior consumed Send permit expires. No resend will occur.`,"info");return false;}setStatus(`Recovery blocked: ${compact(acquired)}`,"error");return false;}
     let d=acquired.delivery;const fence=acquired.lease.fence;active={delivery_id:d.delivery_id,fence};setStatus(summary(d,`lease fence: ${fence}${acquired.reconciliation_only?" (reconciliation only)":""}`));
-    if(["CLAIMED","COMPOSER_FILLING","COMPOSER_FILLED"].includes(d.state)||(d.state==="SUBMITTING"&&!d.send_consumed_at)){sendCritical=true;try{return await continuePreSend(d,fence);}finally{sendCritical=false;}}
+    if(acquired.controller_escalation||acquired.terminal){active=null;stopPolling();setStatus(summary(d,"Hard budget exhausted before Send; controller escalation persisted and no user turn was sent."),"error");return false;}
+    if(["CLAIMED","COMPOSER_FILLING","COMPOSER_FILLED"].includes(d.state)){sendCritical=true;try{return await continuePreSend(d,fence);}finally{sendCritical=false;}}
     startPolling();scheduleReconcile(0);return true;
   }
 
   async function reconcileNow(){
     if(!active)return;
-    const reloadFault=await faultPoint("tab_reload_during_generation",active.delivery_id);
-    if(reloadFault){setStatus("Injected Wave-2 tab reload; durable recovery will rebind before any new side effect.","error");globalThis.location?.reload?.();return;}
-    const snap=await snapshotWithInjectedUi();const r=await runtimeSend({type:"WAVE2_RECONCILE",delivery_id:active.delivery_id,actor_id:actorId,fence:active.fence,snapshot:snap});
+    const base=Dom.snapshot();
+    if(base.generating){
+      const reloadFault=await faultPoint("tab_reload_during_generation",active.delivery_id);
+      if(reloadFault){setStatus("Injected Wave-2 tab reload during generation; durable recovery will rebind before any new side effect.","error");globalThis.location?.reload?.();return;}
+    }
+    const snap=await snapshotWithInjectedUi(base);const r=await runtimeSend({type:"WAVE2_RECONCILE",delivery_id:active.delivery_id,actor_id:actorId,fence:active.fence,snapshot:snap});
     if(!r.ok){setStatus(`Reconciliation paused: ${compact(r)}`,"error");return;}
     const d=r.delivery;setStatus(summary(d,r.waiting_for?`waiting for: ${r.waiting_for}`:r.ui_state?`UI: ${r.ui_state}`:""),d?.state==="ACKED"?"success":"info");
     if(r.next_delivery){active=null;stopPolling();await recoverDelivery(r.next_delivery.delivery_id);return;}
@@ -72,9 +76,9 @@
 
   async function bind(){const route=Dom.routeIdentity();if(!Config.isDurablePageId(route)){setStatus("Open a saved ChatGPT conversation ending in /c/<id>.","error");return;}const r=await runtimeSend({type:"WAVE2_BIND",provider_locator:route,actor_id:actorId});setStatus(r.ok?`Bound ${r.binding.conversation_id}`:compact(r),r.ok?"success":"error");}
   async function run(){if(active){setStatus("A Wave-2 Delivery is already active.","error");return;}const status=await runtimeSend({type:"WAVE2_STATUS"});if(!status.ok||!status.binding){setStatus("Bind this conversation first.","error");return;}if(status.binding.paused){setStatus(`Conversation paused: ${status.binding.pause_reason}. Reconcile and press Resume first.`,"error");return;}const instruction=String(els.instruction.value||"").trim();if(!instruction){setStatus("Enter a task instruction.","error");return;}const created=await runtimeSend({type:"WAVE2_CREATE_ASSIGNMENT",conversation_id:status.binding.conversation_id,instruction,budgets:{max_continuations:Number(els.continuations.value)||3,max_recoverable_failures:2,max_elapsed_ms:30*60*1000,max_protocol_repairs:1},actor_id:actorId});if(!created.ok){setStatus(compact(created),"error");return;}await recoverDelivery(created.delivery.delivery_id);}
-  async function resume(){const status=await runtimeSend({type:"WAVE2_STATUS"});if(!status?.binding||!status?.task){setStatus("No paused task to resume.","error");return;}const r=await runtimeSend({type:"WAVE2_RESUME_MANUAL",conversation_id:status.binding.conversation_id,task_id:status.task.task_id,actor_id:actorId});setStatus(r.ok?"Manual pause cleared after explicit reconciliation. No prior Delivery is resent automatically.":compact(r),r.ok?"success":"error");}
+  async function resume(){const status=await runtimeSend({type:"WAVE2_STATUS"});if(!status?.binding||!status?.task){setStatus("No paused task to resume.","error");return;}const r=await runtimeSend({type:"WAVE2_RESUME_MANUAL",conversation_id:status.binding.conversation_id,task_id:status.task.task_id,actor_id:actorId});if(!r.ok){setStatus(compact(r),"error");return;}setStatus("Manual pause cleared after explicit reconciliation. No prior Delivery is resent automatically.","success");if(status.delivery&&!Core.TERMINAL_DELIVERY_STATES.has(status.delivery.state))await recoverDelivery(status.delivery.delivery_id);}
   async function journal(){const status=await runtimeSend({type:"WAVE2_STATUS"});if(!status?.delivery){setStatus("No Delivery exists.","error");return;}const r=await runtimeSend({type:"WAVE2_JOURNAL",delivery_id:status.delivery.delivery_id});setStatus(r.ok?`journal events: ${r.events.length}\n${r.events.map(e=>`${e.seq} ${e.event_type} ${e.previous_state??""}->${e.next_state??""}`).join("\n")}`:compact(r),r.ok?"success":"error");}
-  async function recoverCurrent(){const status=await runtimeSend({type:"WAVE2_STATUS"});if(!status?.ok||!status.delivery)return;if(!Core.TERMINAL_DELIVERY_STATES.has(status.delivery.state))await recoverDelivery(status.delivery.delivery_id);}
+  async function recoverCurrent(){const status=await runtimeSend({type:"WAVE2_STATUS"});if(!status?.ok||!status.delivery)return;if(status.binding?.paused||status.task?.manual_pause){setStatus(`Automation remains paused after restart: ${status.binding?.pause_reason||"manual reconciliation required"}. Press Resume only after reconciling the conversation.`,"error");return;}if(!Core.TERMINAL_DELIVERY_STATES.has(status.delivery.state))await recoverDelivery(status.delivery.delivery_id);}
   globalThis.MultiAgentWave2Dev=Object.freeze({
     armFaults:(points)=>runtimeSend({type:"WAVE2_CONFIGURE_FAULTS",enabled:true,points:Array.isArray(points)?points:[],actor_id:actorId}),
     clearFaults:()=>runtimeSend({type:"WAVE2_CONFIGURE_FAULTS",enabled:false,points:[],actor_id:actorId})
