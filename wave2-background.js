@@ -130,4 +130,118 @@
       }
     }
 
-    if (["DELIVERED","RESPONSE_STARTED"
+    if (["DELIVERED","RESPONSE_STARTED"].includes(d.state)) {
+      const owned = W1.resolveTurnAnchor(snapshot, d.user_receipt?.identity_key, d.user_receipt?.fingerprint, d.payload);
+      if (!owned) return { ok:true, delivery:d, terminal:false, waiting_for:"owned_user_anchor" };
+      const foreign = W1.turnsAfterAnchor(snapshot, d.user_receipt?.identity_key, "user", d.user_receipt?.fingerprint, d.payload);
+      if (foreign.length) return { ok:true, delivery:await Store.markResponseSuperseded({ delivery_id:d.delivery_id, actor_id:message.actor_id, fence:message.fence, reason:"FOREIGN_USER_TURN_AFTER_OWNED_RECEIPT", boot_id:BOOT_ID, evidence:{foreign_user_turns:foreign.length} }), terminal:true, manual_pause:true };
+      if (["authentication_required","rate_limited","unrecognized_ui"].includes(snapshot.ui_state)) return { ok:true, delivery:d, terminal:false, blocked:true, waiting_for:snapshot.ui_state };
+      if (["connection_waiting","retryable_model_error"].includes(snapshot.ui_state)) return { ok:true, delivery:d, terminal:false, waiting_for:snapshot.ui_state };
+    }
+
+    if (d.state === "DELIVERED") {
+      const candidate = W1.selectAssistantCandidate({ baseline:d.baseline, receipt:{turn:d.user_receipt}, snapshot, ownedUserText:d.payload });
+      if (!candidate) return { ok:true, delivery:d, terminal:false, waiting_for:"assistant_candidate" };
+      const textHash = await Core.sha256Hex(Core.normalizeText(candidate.text));
+      d = await Store.markResponseStarted({ delivery_id:d.delivery_id, actor_id:message.actor_id, fence:message.fence, candidate, text_hash:textHash, boot_id:BOOT_ID });
+      return { ok:true, delivery:d, terminal:false, waiting_for:"assistant_completion" };
+    }
+
+    if (d.state === "RESPONSE_STARTED") {
+      const candidate = W1.selectAssistantCandidate({ baseline:d.baseline, receipt:{turn:d.user_receipt}, snapshot, ownedUserText:d.payload, currentIdentity:d.assistant_candidate?.identity_key, currentIdentityKind:d.assistant_candidate?.identity_kind });
+      if (!candidate) return { ok:true, delivery:d, terminal:false, waiting_for:"assistant_candidate" };
+      const textHash = await Core.sha256Hex(Core.normalizeText(candidate.text));
+      if (textHash !== d.assistant_text_hash || candidate.identity_key !== d.assistant_candidate?.identity_key) {
+        d = await Store.recordAssistantMutation({ delivery_id:d.delivery_id, actor_id:message.actor_id, fence:message.fence, candidate, text_hash:textHash, boot_id:BOOT_ID });
+        return { ok:true, delivery:d, terminal:false, waiting_for:"assistant_quiescence" };
+      }
+      const completion = W1.turnCompletionEvidence({ delivered:Boolean(d.user_receipt), candidate, snapshot, last_changed_at:d.assistant_last_changed_at, now:Date.now() });
+      if (!completion.complete) return { ok:true, delivery:d, terminal:false, waiting_for:"assistant_completion", completion };
+      d = await Store.markResponseReceived({ delivery_id:d.delivery_id, actor_id:message.actor_id, fence:message.fence, response_text:candidate.text, response_text_hash:textHash, boot_id:BOOT_ID, evidence:completion.evidence });
+      await fire("after_response_detected", d.delivery_id, message.actor_id);
+    }
+
+    if (d.state === "RESPONSE_RECEIVED") {
+      const status = await Store.latestForLocator(d.provider_locator); const persisted = status.result && status.result.delivery_id === d.delivery_id ? status.result : null;
+      if (persisted) {
+        const acked = await Store.ackWorkerResult({ delivery_id:d.delivery_id, actor_id:message.actor_id, fence:message.fence, boot_id:BOOT_ID });
+        const post = await Store.materializePostResult({ delivery_id:d.delivery_id, boot_id:BOOT_ID });
+        return { ok:true, delivery:acked.delivery, result:acked.result, next_delivery:post.next_delivery_id?await Store.getDelivery(post.next_delivery_id):null, terminal:!post.next_delivery_id };
+      }
+      const parsed = Core.parseWorkerTerminal(d.response_text, d);
+      if (!parsed.ok) {
+        const repair = await Store.ensureProtocolRepair({ original_delivery_id:d.delivery_id, boot_id:BOOT_ID });
+        if (!repair.ok) {
+          d = await Store.closeProtocolFailure({ delivery_id:d.delivery_id, actor_id:message.actor_id, fence:message.fence, reason:"PROTOCOL_REPAIR_EXHAUSTED", boot_id:BOOT_ID });
+          return { ok:true, delivery:d, terminal:true, task_terminal:false, controller_escalation:true, protocol_error:parsed.code };
+        }
+        return { ok:true, delivery:await Store.getDelivery(d.delivery_id), next_delivery:await Store.getDelivery(repair.repair_delivery_id), terminal:false, protocol_repair:true, protocol_error:parsed.code };
+      }
+      return finishResponse(d, { ...message, parsed_envelope:parsed.envelope });
+    }
+    return { ok:true, delivery:d, terminal:false };
+  }
+
+  async function handleStartup(message, sender) {
+    const locator = requireDurableLocator(senderLocator(sender)), binding = await Store.getBindingByLocator(locator);
+    if (!binding) return { ok:true, bound:false, ready:false };
+    await Store.beginStartupReconciliation({ conversation_id:binding.conversation_id, actor_id:message.actor_id, boot_id:BOOT_ID });
+    let deliveries = await Store.listDeliveriesForConversation(binding.conversation_id);
+    let nonterminal = deliveries.filter(d => !Core.isTerminalState(d.state)).sort((a,b)=>Number(b.conversation_seq)-Number(a.conversation_seq))[0] || null;
+    if (!nonterminal) {
+      const latest = deliveries.sort((a,b)=>Number(b.conversation_seq)-Number(a.conversation_seq))[0] || null;
+      if (latest?.state === "ACKED") {
+        try { await Store.materializePostResult({ delivery_id:latest.delivery_id, boot_id:BOOT_ID }); } catch {}
+        deliveries = await Store.listDeliveriesForConversation(binding.conversation_id);
+        nonterminal = deliveries.filter(d => !Core.isTerminalState(d.state)).sort((a,b)=>Number(b.conversation_seq)-Number(a.conversation_seq))[0] || null;
+      }
+    }
+    if (!nonterminal) { await Store.completeStartupReconciliation({ conversation_id:binding.conversation_id, actor_id:message.actor_id, boot_id:BOOT_ID }); return { ok:true, bound:true, ready:true, binding }; }
+    const acquired = await Store.acquireLease({ delivery_id:nonterminal.delivery_id, actor_id:message.actor_id, boot_id:BOOT_ID, force_reclaim:true }); nonterminal = acquired.delivery;
+    const observation = { composer_empty:!Core.canonicalText(message.snapshot?.composer_text), composer_exact_payload:Core.canonicalText(message.snapshot?.composer_text)===Core.canonicalText(nonterminal.payload), foreign_composer_text:Boolean(Core.canonicalText(message.snapshot?.composer_text))&&Core.canonicalText(message.snapshot?.composer_text)!==Core.canonicalText(nonterminal.payload), exact_owned_receipt:false };
+    let plan = Core.restartPlan(nonterminal, observation), result = null;
+    if (plan.action === "MARK_COMPOSER_FILLED") { nonterminal = await Store.markComposerFilled({ delivery_id:nonterminal.delivery_id, actor_id:message.actor_id, fence:acquired.lease.fence, boot_id:BOOT_ID }); plan = { action:"RESUME_SEND_AUTHORIZATION" }; }
+    if (plan.action === "PAUSE_MANUAL") { nonterminal = await Store.failPreSend({ delivery_id:nonterminal.delivery_id, actor_id:message.actor_id, fence:acquired.lease.fence, reason:plan.reason, manual_pause:true, boot_id:BOOT_ID }); result = { ok:true, delivery:nonterminal, terminal:true, manual_pause:true }; }
+    else if (["REATTACH_RESPONSE","CAPTURE_RESULT_ONLY","DELIVERY_UNKNOWN"].includes(plan.action) || Core.POST_SEND_AMBIGUITY_STATES.has(nonterminal.state)) result = await reconcile({ ...message, delivery_id:nonterminal.delivery_id, fence:acquired.lease.fence }, sender, { startup:true });
+    else result = { ok:true, delivery:nonterminal, terminal:false, resume_action:plan.action, fence:acquired.lease.fence };
+    await Store.completeStartupReconciliation({ conversation_id:binding.conversation_id, actor_id:message.actor_id, boot_id:BOOT_ID });
+    return { ...result, bound:true, ready:true, binding, fence:acquired.lease.fence };
+  }
+
+  async function handleFaultConfig(message) { return { ok:true, fault:await Store.configureFault({ point:message.point, remaining:message.remaining, enabled:message.enabled !== false }) }; }
+  async function handleFaultFire(message) { return { ok:true, fired:await Store.maybeFireFault({ point:message.point, delivery_id:message.delivery_id||"", actor_id:message.actor_id||"", boot_id:BOOT_ID }) }; }
+  async function handleJournal(message, sender) { const d=await requireDeliveryRoute(message.delivery_id,sender); return {ok:true,events:await Store.getEventsForDelivery(d.delivery_id)}; }
+
+  async function dispatch(message, sender) {
+    switch (message.type) {
+      case "WAVE2_BIND": return handleBind(message,sender);
+      case "WAVE2_STATUS": return handleStatus(message,sender);
+      case "WAVE2_CREATE_ASSIGNMENT": return handleCreate(message,sender);
+      case "WAVE2_CLAIM": return handleClaim(message,sender);
+      case "WAVE2_BEGIN_FILL": return handleBeginFill(message,sender);
+      case "WAVE2_COMPOSER_FILLED": return handleComposerFilled(message,sender);
+      case "WAVE2_FAIL_PRE_SEND": return handleFailPreSend(message,sender);
+      case "WAVE2_AUTHORIZE_SEND": return handleAuthorize(message,sender);
+      case "WAVE2_CONSUME_SEND": return handleConsume(message,sender);
+      case "WAVE2_MARK_SENT": return handleSent(message,sender);
+      case "WAVE2_MARK_UNKNOWN": return handleUnknown(message,sender);
+      case "WAVE2_RECONCILE": {
+        if (await Store.maybeFireFault({point:"drop_observer_callback",delivery_id:message.delivery_id,actor_id:message.actor_id,boot_id:BOOT_ID})) return {ok:true,dropped:true,terminal:false};
+        const first=await reconcile(message,sender);
+        if (await Store.maybeFireFault({point:"duplicate_observer_callback",delivery_id:message.delivery_id,actor_id:message.actor_id,boot_id:BOOT_ID})) await reconcile(message,sender).catch(()=>{});
+        return first;
+      }
+      case "WAVE2_STARTUP": return handleStartup(message,sender);
+      case "WAVE2_CONFIGURE_FAULT": return handleFaultConfig(message);
+      case "WAVE2_FIRE_FAULT": return handleFaultFire(message);
+      case "WAVE2_JOURNAL": return handleJournal(message,sender);
+      default: return {ok:false,code:"wave2.message_unknown",reason:"Unknown Wave-2 operation"};
+    }
+  }
+
+  chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
+    if (!message?.type?.startsWith("WAVE2_")) return false;
+    Promise.resolve(dispatch(message,sender)).then(sendResponse).catch(error=>sendResponse({ok:false,code:error?.code||"wave2.error",reason:error?.message||String(error),fault_point:error?.fault_point||""}));
+    return true;
+  });
+})();
