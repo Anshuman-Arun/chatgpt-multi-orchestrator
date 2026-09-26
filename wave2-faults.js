@@ -18,7 +18,7 @@
     if (!POINTS.includes(point) || !Store?.consumeFaultPlan) return null;
     const fault = await Store.consumeFaultPlan({point,delivery_id,actor_id,boot_id});
     if (!fault) return null;
-    if (fault.action === "CRASH") throw new InjectedFault(point, fault.action);
+    if (fault.action === "CRASH") { setTimeout(() => globalThis.chrome?.runtime?.reload?.(), 0); throw new InjectedFault(point, fault.action); }
     return fault;
   }
   return Object.freeze({POINTS, InjectedFault, maybeFire});
