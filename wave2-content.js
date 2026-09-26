@@ -164,4 +164,21 @@
   }
 
   async function showJournal() {
-    const status=await runtimeSend({type:"WAVE2_STATUS"}); if(!status.delivery){setStatus("No Deli
+    const status=await runtimeSend({type:"WAVE2_STATUS"}); if(!status.delivery){setStatus("No Delivery to inspect.","error");return;}
+    const r=await runtimeSend({type:"WAVE2_JOURNAL",delivery_id:status.delivery.delivery_id}); if(!r.ok){setStatus(compactError(r),"error");return;}
+    setStatus(`events: ${r.events.length}\n${r.events.map(e=>`${e.seq} ${e.event_type} ${e.previous_state||"-"}->${e.next_state||"-"} ${e.reason}`).join("\n")}`);
+  }
+
+  function installPanel() {
+    const host=document.createElement("div");host.id="multiagent-wave2-host";host.style.cssText="position:fixed;right:16px;bottom:16px;z-index:2147483647";
+    const shadow=host.attachShadow({mode:"open"});shadow.innerHTML=`<style>:host{all:initial}details{width:360px;font:12px/1.4 system-ui;color:#eee;background:#151515;border:1px solid #555;border-radius:10px}summary{padding:10px;font-weight:700;cursor:pointer}.body{padding:0 10px 10px;display:grid;gap:7px}textarea,input,select,button{font:inherit}textarea,input,select{box-sizing:border-box;width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:6px;padding:6px}textarea{min-height:80px}.row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px}.actions{display:flex;gap:5px;flex-wrap:wrap}button{background:#2c2c2c;color:#eee;border:1px solid #666;border-radius:6px;padding:6px 8px;cursor:pointer}pre{white-space:pre-wrap;overflow:auto;max-height:210px;background:#0d0d0d;padding:7px;border-radius:6px;margin:0}pre[data-level=error]{color:#ffaaaa}pre[data-level=success]{color:#aaffbb}.small{color:#aaa}</style><details><summary>MultiAgent · Wave 2</summary><div class="body"><div class="small">Reliable single-worker lane. Startup reconciliation runs before new sends.</div><textarea id="instruction">Work on this task autonomously. Use CONTINUE if another turn is needed; use DONE only when complete.</textarea><div class="row"><input id="turns" type="number" min="0" value="8" title="max continuation turns"><input id="failures" type="number" min="0" value="3" title="max recoverable failures"><input id="minutes" type="number" min="1" value="45" title="max minutes"></div><div class="actions"><button id="bind">Bind</button><button id="run">Run assignment</button><button id="reconcile">Reconcile</button><button id="journal">Journal</button></div><select id="fault">${Core.FAULT_POINTS.map(p=>`<option>${p}</option>`).join("")}</select><div class="row"><input id="faultCount" type="number" min="1" value="1"><button id="arm">Arm fault</button><span></span></div><pre id="status" role="status"></pre></div></details>`;
+    (document.body||document.documentElement).append(host);
+    const q=id=>shadow.getElementById(id);els={instruction:q("instruction"),turns:q("turns"),failures:q("failures"),minutes:q("minutes"),fault:q("fault"),faultCount:q("faultCount"),status:q("status")};
+    q("bind").onclick=()=>bindCurrent().catch(e=>setStatus(e.message,"error"));q("run").onclick=()=>createAndRun().catch(e=>setStatus(e.message,"error"));q("reconcile").onclick=()=>startupReconcile().catch(e=>setStatus(e.message,"error"));q("journal").onclick=()=>showJournal().catch(e=>setStatus(e.message,"error"));q("arm").onclick=()=>armFault().catch(e=>setStatus(e.message,"error"));
+  }
+
+  const observer=new MutationObserver(()=>{if(active)scheduleReconcile(150);});
+  function start(){if(!document.body&&!document.documentElement)return;document.getElementById("multiagent-wave1-host")?.remove();installPanel();observer.observe(document.body||document.documentElement,{childList:true,subtree:true,characterData:true});startupReconcile().catch(e=>setStatus(e.message,"error"));}
+  window.addEventListener("pagehide",()=>{stopPolling();observer.disconnect();});
+  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",start,{once:true});else start();
+})();
